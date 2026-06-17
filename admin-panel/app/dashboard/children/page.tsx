@@ -58,8 +58,8 @@ export default function ChildrenPage() {
     return () => unsub();
   }, []);
 
-  const villages = useMemo(() => [...new Set(children.map((c) => c.village).filter(Boolean))].sort(), [children]);
-  const employees = useMemo(() => [...new Set(children.map((c) => c.employeeName).filter(Boolean))].sort(), [children]);
+  const villages = useMemo(() => Array.from(new Set(children.map((c) => c.village).filter(Boolean) as string[])).sort(), [children]);
+  const employees = useMemo(() => Array.from(new Set(children.map((c) => c.employeeName).filter(Boolean) as string[])).sort(), [children]);
 
   const filtered = useMemo(() => {
     let data = [...children];
