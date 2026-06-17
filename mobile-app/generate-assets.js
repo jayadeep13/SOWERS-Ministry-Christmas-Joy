@@ -35,7 +35,7 @@ async function make(width, height, logoSize, outFile) {
   await make(1024, 1024, 640, './assets/adaptive-icon.png');
 
   // Splash screen (1284×2778 — iPhone 14 Pro Max resolution, scales down)
-  await make(1284, 2778, 480, './assets/splash.png');
+  await make(1284, 2778, 800, './assets/splash.png');
 
   console.log('\nAll assets generated. Now run: npx expo start --clear');
 })().catch((err) => {

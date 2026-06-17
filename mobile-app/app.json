@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0B1C3D"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.sowersministry.app"
@@ -22,7 +24,9 @@
         "backgroundColor": "#0B1C3D"
       },
       "package": "com.sowersministry.app",
-      "permissions": ["INTERNET"]
+      "permissions": [
+        "INTERNET"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -32,10 +36,16 @@
         {
           "backgroundColor": "#0B1C3D",
           "image": "./assets/splash.png",
-          "imageWidth": 220
+          "imageWidth": 350
         }
       ]
     ],
-    "scheme": "sowersministry"
+    "scheme": "sowersministry",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "178fae50-2617-4025-b7fb-c3025b03d41a"
+      }
+    }
   }
 }
