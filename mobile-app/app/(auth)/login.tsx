@@ -42,20 +42,6 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
-
-      // Check if this phone number is a registered employee
-      const snap = await getDocs(
-        query(collection(db, 'users'), where('phone', '==', formattedPhone))
-      );
-      if (snap.empty) {
-        Alert.alert(
-          'Access Denied',
-          "You don't have permission to sign in. Please contact the owner."
-        );
-        setLoading(false);
-        return;
-      }
-
       const res = await fetch(
         `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${FIREBASE_API_KEY}`,
         {
@@ -86,7 +72,26 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const credential = PhoneAuthProvider.credential(sessionInfo, otp);
-      await signInWithCredential(auth, credential);
+      const userCredential = await signInWithCredential(auth, credential);
+
+      // Verify this phone number belongs to a registered employee
+      const phoneNumber = userCredential.user.phoneNumber ?? '';
+      const snap = await getDocs(
+        query(collection(db, 'users'), where('phone', '==', phoneNumber))
+      );
+      if (snap.empty) {
+        await auth.signOut();
+        Alert.alert(
+          'Access Denied',
+          "You don't have permission to sign in. Please contact the owner."
+        );
+        setStep('phone');
+        setOtp('');
+        setSessionInfo('');
+        setLoading(false);
+        return;
+      }
+
       router.replace('/(app)/home');
     } catch (error: any) {
       Alert.alert('Invalid OTP', error.message || 'The OTP you entered is incorrect. Please try again.');
