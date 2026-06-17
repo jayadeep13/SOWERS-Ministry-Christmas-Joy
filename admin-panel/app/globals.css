@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --dark: #0B1C3D;
+  --dark-light: #122347;
+  --blue-brand: #1E3A8A;
+  --gold: #D4AF37;
+  --gold-light: #F0C84A;
+  --gold-dark: #B8960C;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  background-color: #F4F7FB;
+  color: #111827;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.04);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(212,175,55,0.4);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(212,175,55,0.65);
+}
+
+@layer components {
+  /* White card with soft shadow */
+  .glass-card {
+    @apply bg-white border border-gray-100 rounded-2xl shadow-sm;
+  }
+
+  .gold-btn {
+    @apply bg-gradient-to-r from-gold to-gold-dark text-black font-semibold rounded-full
+           transition-all duration-200 hover:shadow-gold hover:scale-[1.02] active:scale-[0.98];
+  }
+
+  /* Light input */
+  .input-field {
+    @apply bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-gray-900 text-sm
+           focus:outline-none focus:border-gold focus:bg-white transition-all duration-200
+           placeholder:text-gray-400;
+  }
+
+  .stat-card {
+    @apply glass-card p-6 relative overflow-hidden;
+  }
+
+  .table-row {
+    @apply border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+}
+
+/* Native select dropdown options */
+select option {
+  background-color: #ffffff;
+  color: #111827;
+  font-size: 14px;
+}
+
+/* Keep login / full-dark screens working */
+.bg-gradient-primary {
+  background-image: linear-gradient(135deg, #1E3A8A 0%, #0B1C3D 100%);
+}

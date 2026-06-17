@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Sowers Ministry",
+    "slug": "sowers-ministry",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1C3D"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.sowersministry.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1C3D"
+      },
+      "package": "com.sowersministry.app",
+      "permissions": ["INTERNET"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B1C3D",
+          "image": "./assets/splash.png",
+          "imageWidth": 220
+        }
+      ]
+    ],
+    "scheme": "sowersministry"
+  }
+}

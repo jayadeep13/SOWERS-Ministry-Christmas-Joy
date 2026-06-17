@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1088538841840",
+    "project_id": "sowers-ministry-970cc",
+    "storage_bucket": "sowers-ministry-970cc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1088538841840:android:01ff9fee61e02cb3756835",
+        "android_client_info": {
+          "package_name": "com.sowersministry.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAjX9BIX5msx6yD7zkpauOdK9xnLbI-yR4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
