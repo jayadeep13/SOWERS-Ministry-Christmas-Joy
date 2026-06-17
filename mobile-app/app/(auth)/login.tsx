@@ -42,6 +42,20 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
+
+      // Block unregistered numbers before sending SMS (saves cost)
+      const snap = await getDocs(
+        query(collection(db, 'users'), where('phone', '==', formattedPhone))
+      );
+      if (snap.empty) {
+        Alert.alert(
+          'Access Denied',
+          "You don't have permission to sign in.\nPlease contact the owner."
+        );
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch(
         `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${FIREBASE_API_KEY}`,
         {
