@@ -14,8 +14,9 @@ import {
   Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { auth, firebaseConfig } from '../../lib/firebase';
+import { auth, db, firebaseConfig } from '../../lib/firebase';
 import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { router } from 'expo-router';
 import { Colors, FontFamilies, Spacing, BorderRadius } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -41,6 +42,20 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
+
+      // Check if this phone number is a registered employee
+      const snap = await getDocs(
+        query(collection(db, 'users'), where('phone', '==', formattedPhone))
+      );
+      if (snap.empty) {
+        Alert.alert(
+          'Access Denied',
+          "You don't have permission to sign in. Please contact the owner."
+        );
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch(
         `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${FIREBASE_API_KEY}`,
         {
