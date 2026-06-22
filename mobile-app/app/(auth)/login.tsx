@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,14 +14,14 @@ import {
   Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { auth, db, firebaseConfig } from '../../lib/firebase';
-import { PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
+import { signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { router } from 'expo-router';
 import { Colors, FontFamilies, Spacing, BorderRadius } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
-const FIREBASE_API_KEY = firebaseConfig.apiKey;
 const { width: SW, height: SH } = Dimensions.get('window');
 const HERO_H = SH * 0.42;
 
@@ -30,9 +30,10 @@ export default function LoginScreen() {
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [loading, setLoading] = useState(false);
-  const [sessionInfo, setSessionInfo] = useState('');
+  const [confirmResult, setConfirmResult] = useState<any>(null);
   const [focusPhone, setFocusPhone] = useState(false);
   const [focusOtp, setFocusOtp] = useState(false);
+  const recaptchaVerifier = useRef<any>(null);
 
   const sendOTP = async () => {
     if (phone.length < 10) {
@@ -56,17 +57,8 @@ export default function LoginScreen() {
         return;
       }
 
-      const res = await fetch(
-        `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${FIREBASE_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phoneNumber: formattedPhone, recaptchaToken: 'bypass' }),
-        }
-      );
-      const json = await res.json();
-      if (json.error) throw new Error(json.error.message);
-      setSessionInfo(json.sessionInfo);
+      const result = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifier.current);
+      setConfirmResult(result);
       setStep('otp');
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to send OTP. Please try again.');
@@ -79,14 +71,13 @@ export default function LoginScreen() {
       Alert.alert('Invalid OTP', 'Please enter the 6-digit OTP.');
       return;
     }
-    if (!sessionInfo) {
+    if (!confirmResult) {
       Alert.alert('Error', 'Please request OTP first.');
       return;
     }
     setLoading(true);
     try {
-      const credential = PhoneAuthProvider.credential(sessionInfo, otp);
-      const userCredential = await signInWithCredential(auth, credential);
+      const userCredential = await confirmResult.confirm(otp);
 
       // Verify this phone number belongs to a registered employee
       const phoneNumber = userCredential.user.phoneNumber ?? '';
@@ -101,7 +92,7 @@ export default function LoginScreen() {
         );
         setStep('phone');
         setOtp('');
-        setSessionInfo('');
+        setConfirmResult(null);
         setLoading(false);
         return;
       }
@@ -115,6 +106,13 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.root}>
+      {/* Invisible reCAPTCHA — required for real phone number OTP */}
+      <FirebaseRecaptchaVerifierModal
+        ref={recaptchaVerifier}
+        firebaseConfig={firebaseConfig}
+        attemptInvisibleVerification={true}
+      />
+
       {/* ── Scrollable area: hero photo + input card ── */}
       <ScrollView
         style={styles.scroll}
@@ -263,7 +261,7 @@ export default function LoginScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.backLink}
-                onPress={() => { setStep('phone'); setSessionInfo(''); }}
+                onPress={() => { setStep('phone'); setConfirmResult(null); }}
               >
                 <Ionicons name="arrow-back" size={14} color={Colors.whiteAlpha60} />
                 <Text style={styles.backLinkText}>Change Number</Text>
