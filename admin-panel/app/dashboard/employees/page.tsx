@@ -1,12 +1,12 @@
 'use client';
 // app/dashboard/employees/page.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { db } from '../../../lib/firebase';
 import {
   collection, onSnapshot, query, orderBy, setDoc, doc, serverTimestamp, deleteDoc
 } from 'firebase/firestore';
 import {
-  UserPlus, Phone, Trash2, Loader2, X, CheckCircle
+  UserPlus, Phone, Trash2, Loader2, X, CheckCircle, ChevronDown, ChevronUp, MapPin, Baby
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -18,14 +18,28 @@ interface Employee {
   createdAt: any;
 }
 
+interface Child {
+  id: string;
+  firstName: string;
+  lastName: string;
+  age: number;
+  gender: string;
+  village: string;
+  employeeName: string;
+  employeeId: string;
+  createdAt: any;
+}
+
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [form, setForm] = useState({ name: '', phone: '' });
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('totalEntries', 'desc'));
@@ -35,6 +49,29 @@ export default function EmployeesPage() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'children'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setChildren(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)));
+    });
+    return () => unsub();
+  }, []);
+
+  // Group children by employeeId first, fall back to employeeName
+  const childrenByEmployee = useMemo(() => {
+    const map: Record<string, Child[]> = {};
+    children.forEach((c) => {
+      const key = c.employeeId || c.employeeName || 'Unknown';
+      if (!map[key]) map[key] = [];
+      map[key].push(c);
+    });
+    return map;
+  }, [children]);
+
+  const getEmployeeChildren = (emp: Employee) =>
+    childrenByEmployee[emp.id] ??
+    children.filter((c) => c.employeeName === emp.name);
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,6 +102,8 @@ export default function EmployeesPage() {
     await deleteDoc(doc(db, 'users', id));
   };
 
+  const totalEntries = employees.reduce((s, e) => s + (e.totalEntries || 0), 0);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -91,17 +130,13 @@ export default function EmployeesPage() {
         <div className="w-px bg-gray-100" />
         <div>
           <p className="text-gray-400 text-xs uppercase tracking-widest font-semibold">Total Entries</p>
-          <p className="font-serif text-2xl text-gold mt-1">
-            {employees.reduce((s, e) => s + (e.totalEntries || 0), 0)}
-          </p>
+          <p className="font-serif text-2xl text-gold mt-1">{totalEntries}</p>
         </div>
         <div className="w-px bg-gray-100" />
         <div>
           <p className="text-gray-400 text-xs uppercase tracking-widest font-semibold">Avg. per Employee</p>
           <p className="font-serif text-2xl text-gray-900 mt-1">
-            {employees.length
-              ? Math.round(employees.reduce((s, e) => s + (e.totalEntries || 0), 0) / employees.length)
-              : 0}
+            {employees.length ? Math.round(totalEntries / employees.length) : 0}
           </p>
         </div>
       </div>
@@ -110,7 +145,9 @@ export default function EmployeesPage() {
       <div className="glass-card overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
           <h2 className="font-serif text-xl text-gray-900">Employee Leaderboard</h2>
+          <p className="text-gray-400 text-xs mt-0.5">Click any row to see the children they registered</p>
         </div>
+
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-gold" />
@@ -122,63 +159,139 @@ export default function EmployeesPage() {
             {employees.map((emp, i) => {
               const maxEntries = employees[0]?.totalEntries || 1;
               const pct = Math.round(((emp.totalEntries || 0) / maxEntries) * 100);
+              const empChildren = getEmployeeChildren(emp);
+              const isExpanded = expanded === emp.id;
+
               return (
-                <div key={emp.id} className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors group">
-                  {/* Rank */}
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
-                    i === 0 ? 'bg-gold text-black' :
-                    i === 1 ? 'bg-gray-200 text-gray-600' :
-                    i === 2 ? 'bg-orange-100 text-orange-500' :
-                    'bg-gray-100 text-gray-400'
-                  }`}>
-                    {i + 1}
-                  </div>
+                <div key={emp.id}>
+                  {/* Employee Row */}
+                  <div
+                    className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors group cursor-pointer"
+                    onClick={() => setExpanded(isExpanded ? null : emp.id)}
+                  >
+                    {/* Rank */}
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+                      i === 0 ? 'bg-gold text-black' :
+                      i === 1 ? 'bg-gray-200 text-gray-600' :
+                      i === 2 ? 'bg-orange-100 text-orange-500' :
+                      'bg-gray-100 text-gray-400'
+                    }`}>
+                      {i + 1}
+                    </div>
 
-                  {/* Avatar */}
-                  <div className="w-10 h-10 rounded-full bg-[#1E3A8A] flex items-center justify-center text-white font-bold flex-shrink-0 text-sm">
-                    {emp.name?.[0]?.toUpperCase() || '?'}
-                  </div>
+                    {/* Avatar */}
+                    <div className="w-10 h-10 rounded-full bg-[#1E3A8A] flex items-center justify-center text-white font-bold flex-shrink-0 text-sm">
+                      {emp.name?.[0]?.toUpperCase() || '?'}
+                    </div>
 
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-gray-900 font-semibold truncate">{emp.name || 'Unknown'}</p>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-gray-400 text-xs flex items-center gap-1">
-                        <Phone size={10} />
-                        {emp.phone || '—'}
-                      </span>
-                      {emp.createdAt?.toDate && (
-                        <span className="text-gray-400 text-xs">
-                          Joined {format(emp.createdAt.toDate(), 'MMM yyyy')}
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-gray-900 font-semibold truncate">{emp.name || 'Unknown'}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-gray-400 text-xs flex items-center gap-1">
+                          <Phone size={10} />
+                          {emp.phone || '—'}
+                        </span>
+                        {emp.createdAt?.toDate && (
+                          <span className="text-gray-400 text-xs">
+                            Joined {format(emp.createdAt.toDate(), 'MMM yyyy')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 h-1.5 bg-gray-100 rounded-full">
+                        <div
+                          className="h-1.5 rounded-full transition-all duration-500"
+                          style={{
+                            width: `${pct}%`,
+                            background: i === 0 ? '#D4AF37' : '#1E3A8A',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Count */}
+                    <div className="text-right flex-shrink-0">
+                      <p className={`font-serif text-xl font-bold ${i === 0 ? 'text-gold' : 'text-gray-900'}`}>
+                        {emp.totalEntries || 0}
+                      </p>
+                      <p className="text-gray-400 text-xs">entries</p>
+                    </div>
+
+                    {/* Expand chevron */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {empChildren.length > 0 && (
+                        <span className="text-xs text-gray-400 hidden sm:block">
+                          {empChildren.length} child{empChildren.length !== 1 ? 'ren' : ''}
                         </span>
                       )}
+                      {isExpanded
+                        ? <ChevronUp size={16} className="text-gold" />
+                        : <ChevronDown size={16} className="text-gray-400 group-hover:text-gold transition-colors" />
+                      }
                     </div>
-                    <div className="mt-2 h-1.5 bg-gray-100 rounded-full">
-                      <div
-                        className="h-1.5 rounded-full transition-all duration-500"
-                        style={{
-                          width: `${pct}%`,
-                          background: i === 0 ? '#D4AF37' : '#1E3A8A',
-                        }}
-                      />
-                    </div>
+
+                    {/* Delete */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(emp.id, emp.name); }}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all"
+                    >
+                      <Trash2 size={15} />
+                    </button>
                   </div>
 
-                  {/* Count */}
-                  <div className="text-right flex-shrink-0">
-                    <p className={`font-serif text-xl font-bold ${i === 0 ? 'text-gold' : 'text-gray-900'}`}>
-                      {emp.totalEntries || 0}
-                    </p>
-                    <p className="text-gray-400 text-xs">entries</p>
-                  </div>
-
-                  {/* Delete */}
-                  <button
-                    onClick={() => handleDelete(emp.id, emp.name)}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all"
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {/* Expanded children list */}
+                  {isExpanded && (
+                    <div className="bg-gray-50 border-t border-gray-100 px-6 py-4">
+                      {empChildren.length === 0 ? (
+                        <p className="text-gray-400 text-sm text-center py-4">
+                          No children registered by this employee yet.
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-3">
+                            {empChildren.length} Children Registered by {emp.name}
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {empChildren.map((child) => (
+                              <div
+                                key={child.id}
+                                className="bg-white border border-gray-100 rounded-xl px-4 py-3 flex items-center gap-3 shadow-sm"
+                              >
+                                <div className="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-gold text-xs font-bold flex-shrink-0">
+                                  {child.firstName?.[0]}{child.lastName?.[0]}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-gray-900 text-sm font-semibold truncate">
+                                    {child.firstName} {child.lastName}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                                      child.gender === 'Male'
+                                        ? 'bg-blue-50 text-blue-600'
+                                        : child.gender === 'Female'
+                                        ? 'bg-pink-50 text-pink-600'
+                                        : 'bg-gray-100 text-gray-500'
+                                    }`}>
+                                      {child.gender} · {child.age}y
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 mt-1">
+                                    <MapPin size={10} className="text-gray-400 flex-shrink-0" />
+                                    <span className="text-gray-400 text-xs truncate">{child.village}</span>
+                                  </div>
+                                </div>
+                                {child.createdAt?.toDate && (
+                                  <p className="text-gray-300 text-xs flex-shrink-0">
+                                    {format(child.createdAt.toDate(), 'dd MMM')}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { db } from '../../../lib/firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter } from 'lucide-react';
+import { db, auth } from '../../../lib/firebase';
+import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
+import { Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
 import { format, isToday, isThisWeek, isThisMonth, parseISO, startOfDay, endOfDay } from 'date-fns';
 
@@ -30,9 +30,22 @@ const DATE_CHIPS: { key: DateFilter; label: string }[] = [
   { key: 'custom', label: 'Custom Range' },
 ];
 
+const GENDERS = ['Male', 'Female', 'Other'];
+
+const emptyForm = { firstName: '', lastName: '', parentName: '', age: '', gender: '', village: '' };
+
 export default function ChildrenPage() {
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
+
+  // Add-child modal state
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState(emptyForm);
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState('');
+  const [addSuccess, setAddSuccess] = useState('');
+  const [areas, setAreas] = useState<string[]>([]);
 
   const [search, setSearch] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
@@ -51,12 +64,70 @@ export default function ChildrenPage() {
 
   useEffect(() => {
     const q = query(collection(db, 'children'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setChildren(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)));
+        setLoading(false);
+        setFetchError('');
+      },
+      (err) => {
+        console.error('children fetch error:', err);
+        setFetchError(err.message);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'areas'), orderBy('name', 'asc'));
     const unsub = onSnapshot(q, (snap) => {
-      setChildren(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)));
-      setLoading(false);
+      setAreas(snap.docs.map((d) => d.data().name as string));
     });
     return () => unsub();
   }, []);
+
+  const openAddModal = () => {
+    setAddForm(emptyForm);
+    setAddError('');
+    setAddSuccess('');
+    setShowAdd(true);
+  };
+
+  const handleAddChild = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { firstName, lastName, parentName, age, gender, village } = addForm;
+    if (!firstName.trim()) { setAddError('First name is required'); return; }
+    if (!lastName.trim()) { setAddError('Last name is required'); return; }
+    if (!parentName.trim()) { setAddError('Parent / guardian name is required'); return; }
+    if (!age.trim() || isNaN(Number(age)) || Number(age) < 1) { setAddError('Enter a valid age'); return; }
+    if (!gender) { setAddError('Please select a gender'); return; }
+    if (!village) { setAddError('Please select a village / area'); return; }
+    setAddError('');
+    setAddLoading(true);
+    try {
+      const adminUser = auth.currentUser;
+      await addDoc(collection(db, 'children'), {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        parentName: parentName.trim(),
+        age: parseInt(age),
+        gender,
+        village,
+        employeeId: adminUser?.uid ?? 'admin',
+        employeeName: 'Admin',
+        employeePhone: adminUser?.email ?? '',
+        createdAt: serverTimestamp(),
+      });
+      setAddSuccess(`${firstName.trim()} ${lastName.trim()} added!`);
+      setAddForm(emptyForm);
+      setTimeout(() => { setAddSuccess(''); setShowAdd(false); }, 2000);
+    } catch (err: any) {
+      setAddError(err.message || 'Failed to save. Check your connection.');
+    }
+    setAddLoading(false);
+  };
 
   const villages = useMemo(() => Array.from(new Set(children.map((c) => c.village).filter(Boolean) as string[])).sort(), [children]);
   const employees = useMemo(() => Array.from(new Set(children.map((c) => c.employeeName).filter(Boolean) as string[])).sort(), [children]);
@@ -181,12 +252,154 @@ export default function ChildrenPage() {
               Clear filters
             </button>
           )}
-          <button onClick={exportCSV} className="gold-btn px-4 py-2.5 flex items-center gap-2 text-sm">
+          <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200">
             <Download size={16} />
             Export CSV
           </button>
+          <button onClick={openAddModal} className="gold-btn px-4 py-2.5 flex items-center gap-2 text-sm">
+            <Plus size={16} />
+            Add Child
+          </button>
         </div>
       </div>
+
+      {/* Add Child Modal */}
+      {showAdd && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-lg font-serif font-bold text-gray-900">Add Child Record</h2>
+              <button
+                onClick={() => setShowAdd(false)}
+                className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-200 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {addSuccess && (
+              <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl p-3 mb-4">
+                <CheckCircle size={16} className="text-green-500" />
+                <span className="text-green-700 text-sm">{addSuccess}</span>
+              </div>
+            )}
+            {addError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4">
+                <p className="text-red-600 text-sm">{addError}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleAddChild} className="space-y-4">
+              {/* Name row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gold text-xs font-semibold uppercase tracking-wider mb-1.5">First Name</label>
+                  <input
+                    type="text"
+                    value={addForm.firstName}
+                    onChange={(e) => setAddForm((f) => ({ ...f, firstName: e.target.value }))}
+                    placeholder="First name"
+                    className="input-field w-full"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-gold text-xs font-semibold uppercase tracking-wider mb-1.5">Last Name</label>
+                  <input
+                    type="text"
+                    value={addForm.lastName}
+                    onChange={(e) => setAddForm((f) => ({ ...f, lastName: e.target.value }))}
+                    placeholder="Last name"
+                    className="input-field w-full"
+                  />
+                </div>
+              </div>
+
+              {/* Parent */}
+              <div>
+                <label className="block text-gold text-xs font-semibold uppercase tracking-wider mb-1.5">Parent / Guardian Name</label>
+                <input
+                  type="text"
+                  value={addForm.parentName}
+                  onChange={(e) => setAddForm((f) => ({ ...f, parentName: e.target.value }))}
+                  placeholder="Enter parent or guardian name"
+                  className="input-field w-full"
+                />
+              </div>
+
+              {/* Age */}
+              <div>
+                <label className="block text-gold text-xs font-semibold uppercase tracking-wider mb-1.5">Age</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={addForm.age}
+                  onChange={(e) => setAddForm((f) => ({ ...f, age: e.target.value }))}
+                  placeholder="e.g. 8"
+                  className="input-field w-28"
+                />
+              </div>
+
+              {/* Gender */}
+              <div>
+                <label className="block text-gold text-xs font-semibold uppercase tracking-wider mb-2">Gender</label>
+                <div className="flex gap-2">
+                  {GENDERS.map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => setAddForm((f) => ({ ...f, gender: g }))}
+                      className={`flex-1 py-2 rounded-xl border text-sm font-medium transition-all ${
+                        addForm.gender === g
+                          ? 'bg-[#1a3070] text-white border-[#1a3070]'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-[#1a3070]/40'
+                      }`}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Village */}
+              <div>
+                <label className="block text-gold text-xs font-semibold uppercase tracking-wider mb-1.5">Village / Area</label>
+                <select
+                  value={addForm.village}
+                  onChange={(e) => setAddForm((f) => ({ ...f, village: e.target.value }))}
+                  className="input-field w-full pr-8"
+                >
+                  <option value="">Select village / area</option>
+                  {areas.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+                {areas.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">No areas found — add areas in the Areas section first.</p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(false)}
+                  className="flex-1 py-2.5 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addLoading}
+                  className="gold-btn flex-1 py-2.5 flex items-center justify-center gap-2 text-sm"
+                >
+                  {addLoading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                  Save Record
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Date Filter */}
       <div className="glass-card p-4">
@@ -342,6 +555,14 @@ export default function ChildrenPage() {
                   <td colSpan={7} className="text-center py-16">
                     <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin mx-auto" />
                     <p className="text-gray-400 text-sm mt-3">Loading data...</p>
+                  </td>
+                </tr>
+              ) : fetchError ? (
+                <tr>
+                  <td colSpan={7} className="text-center py-16">
+                    <p className="text-red-500 font-medium text-sm">Failed to load data</p>
+                    <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">{fetchError}</p>
+                    <p className="text-gray-400 text-xs mt-2">Check Firestore security rules — the admin account may not have read permission on the <code className="bg-gray-100 px-1 rounded">children</code> collection.</p>
                   </td>
                 </tr>
               ) : paginated.length === 0 ? (

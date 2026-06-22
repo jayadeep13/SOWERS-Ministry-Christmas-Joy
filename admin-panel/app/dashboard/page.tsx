@@ -8,7 +8,6 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { Users, Baby, Building2, UserCheck } from 'lucide-react';
-import { format } from 'date-fns';
 
 interface Child {
   id: string;
@@ -88,14 +87,6 @@ export default function DashboardPage() {
     return null;
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       {/* Page Title */}
@@ -118,21 +109,18 @@ export default function DashboardPage() {
           label="Male"
           value={males}
           sub={`${children.length ? Math.round((males / children.length) * 100) : 0}% of total`}
-          color="blue"
         />
         <StatCard
           icon={<Baby className="w-6 h-6 text-pink-500" />}
           label="Female"
           value={females}
           sub={`${children.length ? Math.round((females / children.length) * 100) : 0}% of total`}
-          color="pink"
         />
         <StatCard
           icon={<Building2 className="w-6 h-6 text-emerald-500" />}
           label="Villages"
           value={new Set(children.map((c) => c.village)).size}
           sub="Unique villages"
-          color="emerald"
         />
       </div>
 
@@ -237,7 +225,7 @@ export default function DashboardPage() {
                     />
                   </div>
                 </div>
-                <span className="text-gold font-semibold text-sm">{emp.count}</span>
+                <span className="text-gold font-semibold text-sm">{emp.count as number}</span>
               </div>
             ))}
             {employeeData.length === 0 && (
@@ -251,14 +239,13 @@ export default function DashboardPage() {
 }
 
 function StatCard({
-  icon, label, value, sub, accent, color
+  icon, label, value, sub, accent
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   sub: string;
   accent?: boolean;
-  color?: string;
 }) {
   return (
     <div className={`glass-card p-5 relative overflow-hidden ${accent ? 'border-gold/30 border' : ''}`}>
