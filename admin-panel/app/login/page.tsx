@@ -119,9 +119,10 @@ export default function LoginPage() {
               Privacy Policy
             </a>
           </p>
-          <div className="flex items-center justify-center gap-2">
-            <img src="/pjlogo.png" alt="P&J Technologies" className="w-5 h-5 object-contain" />
-            <p className="text-white/25 text-xs">Designed &amp; Developed by P&amp;J Technologies</p>
+          <div className="flex items-center justify-center gap-1.5">
+            <p className="text-white/25 text-xs">Designed &amp; Developed by</p>
+            <img src="/pjlogo.png" alt="P&J Technologies" className="w-4 h-4 object-contain" />
+            <p className="text-white/25 text-xs">P&amp;J Technologies</p>
           </div>
         </div>
       </div>
