@@ -97,10 +97,10 @@ export default function LoginScreen() {
     if (recaptchaToken) {
       await proceedSendOTP(recaptchaToken, formattedPhone);
     } else {
-      // Token not ready yet — set pending and wait for WebView to deliver it
+      // Token not ready or expired — reload WebView to fire fresh reCAPTCHA, then wait
       pendingPhoneRef.current = formattedPhone;
       isPendingRef.current = true;
-      // Stay in loading state; handleWebViewMessage will call proceedSendOTP
+      setWebviewKey((k) => k + 1); // Reload triggers a new reCAPTCHA verify automatically
     }
   };
 
@@ -119,7 +119,16 @@ export default function LoginScreen() {
         }
       );
       const json = await res.json();
-      if (json.error) throw new Error(json.error.message);
+      if (json.error) {
+        const code = json.error.message || '';
+        if (code.includes('TOO_MANY_ATTEMPTS') || code.includes('QUOTA_EXCEEDED')) {
+          throw new Error('Too many attempts. Please wait a few minutes and try again.');
+        }
+        if (code.includes('INVALID_PHONE_NUMBER')) {
+          throw new Error('Invalid phone number. Please check and try again.');
+        }
+        throw new Error('Failed to send OTP. Please try again.');
+      }
       setSessionInfo(json.sessionInfo);
       setStep('otp');
     } catch (error: any) {
@@ -162,7 +171,14 @@ export default function LoginScreen() {
 
       router.replace('/(app)/home');
     } catch (error: any) {
-      Alert.alert('Invalid OTP', error.message || 'The OTP you entered is incorrect. Please try again.');
+      const msg = error.message || '';
+      if (msg.includes('invalid-verification-code') || msg.includes('INVALID_CODE')) {
+        Alert.alert('Wrong OTP', 'The code you entered is incorrect. Please check and try again.');
+      } else if (msg.includes('session-expired') || msg.includes('SESSION_EXPIRED')) {
+        Alert.alert('OTP Expired', 'This OTP has expired. Please go back and request a new one.');
+      } else {
+        Alert.alert('Error', 'Verification failed. Please try again.');
+      }
     }
     setLoading(false);
   };
