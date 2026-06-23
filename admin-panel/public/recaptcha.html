@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>body { margin: 0; background: transparent; }</style>
+</head>
+<body>
+  <div id="recaptcha-container"></div>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script>
+    firebase.initializeApp({
+      apiKey: "AIzaSyCHXbQsAxEw92nT5SAPlNlm4heTZVpJeTA",
+      authDomain: "sowers-ministry-970cc.firebaseapp.com",
+      projectId: "sowers-ministry-970cc"
+    });
+
+    function send(data) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(data));
+      }
+    }
+
+    var verifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+      size: 'invisible',
+      callback: function(token) { send({ type: 'token', token: token }); },
+      'error-callback': function(err) { send({ type: 'error', error: String(err) }); },
+      'expired-callback': function() { send({ type: 'expired' }); }
+    });
+
+    verifier.render().then(function() {
+      verifier.verify();
+    }).catch(function(err) {
+      send({ type: 'error', error: err.message });
+    });
+  </script>
+</body>
+</html>
