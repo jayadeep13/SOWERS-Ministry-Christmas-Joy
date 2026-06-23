@@ -53,7 +53,7 @@ export default function PrivacyPolicy() {
       <h2 style={{ fontSize: 18, fontWeight: 700, marginTop: 32 }}>10. Contact Us</h2>
       <p>If you have any questions about this Privacy Policy, please contact us at:</p>
       <p><strong>Sowers Ministry</strong><br />
-      Email: <a href="mailto:deepsjyo0329@gmail.com" style={{ color: '#1a73e8' }}>deepsjyo0329@gmail.com</a></p>
+      Email: <a href="mailto:info@sowersministry.com" style={{ color: '#1a73e8' }}>info@sowersministry.com</a></p>
     </div>
   );
 }
