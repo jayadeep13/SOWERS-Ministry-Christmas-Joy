@@ -111,9 +111,19 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-white/30 text-xs mt-6">
-          Sowers Ministry · Christmas Joy Programme {new Date().getFullYear()}
-        </p>
+        <div className="text-center mt-6 space-y-3">
+          <p className="text-white/30 text-xs">
+            Sowers Ministry · Christmas Joy Programme {new Date().getFullYear()}
+            &nbsp;·&nbsp;
+            <a href="/privacy" className="text-white/40 hover:text-gold transition-colors underline underline-offset-2">
+              Privacy Policy
+            </a>
+          </p>
+          <div className="flex items-center justify-center gap-2">
+            <img src="/pjlogo.png" alt="P&J Technologies" className="w-5 h-5 object-contain" />
+            <p className="text-white/25 text-xs">Designed &amp; Developed by P&amp;J Technologies</p>
+          </div>
+        </div>
       </div>
     </div>
   );
