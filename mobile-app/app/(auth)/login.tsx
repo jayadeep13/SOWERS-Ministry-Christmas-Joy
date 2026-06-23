@@ -12,6 +12,7 @@ import {
   Alert,
   Image,
   Dimensions,
+  Linking,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -339,6 +340,15 @@ export default function LoginScreen() {
             <Text style={styles.verseText}>"Let the little children come to me"</Text>
             <Text style={styles.verseRef}>— Matthew 19:14</Text>
           </View>
+
+          <TouchableOpacity
+            style={styles.pjCredit}
+            onPress={() => Linking.openURL('https://sowers-ministry-christmas-joy.vercel.app/privacy')}
+            activeOpacity={0.7}
+          >
+            <Image source={require('../../assets/pjlogo.png')} style={styles.pjLogo} resizeMode="contain" />
+            <Text style={styles.pjText}>Designed &amp; Developed by P&amp;J Technologies</Text>
+          </TouchableOpacity>
         </LinearGradient>
       </KeyboardAvoidingView>
     </View>
@@ -534,5 +544,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: FontFamilies.bodySemiBold,
     opacity: 0.7,
+  },
+  pjCredit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingTop: Spacing.sm,
+  },
+  pjLogo: {
+    width: 18,
+    height: 18,
+  },
+  pjText: {
+    color: Colors.whiteAlpha60,
+    fontSize: 10,
+    fontFamily: FontFamilies.body,
+    opacity: 0.6,
   },
 });
