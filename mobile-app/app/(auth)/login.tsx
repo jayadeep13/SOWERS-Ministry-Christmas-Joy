@@ -346,8 +346,9 @@ export default function LoginScreen() {
             onPress={() => Linking.openURL('https://sowers-ministry-christmas-joy.vercel.app/privacy')}
             activeOpacity={0.7}
           >
+            <Text style={styles.pjText}>Designed &amp; Developed by</Text>
             <Image source={require('../../assets/pjlogo.png')} style={styles.pjLogo} resizeMode="contain" />
-            <Text style={styles.pjText}>Designed &amp; Developed by P&amp;J Technologies</Text>
+            <Text style={styles.pjText}>P&amp;J Technologies</Text>
           </TouchableOpacity>
         </LinearGradient>
       </KeyboardAvoidingView>
