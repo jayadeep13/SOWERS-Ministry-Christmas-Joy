@@ -13,10 +13,10 @@ import {
   Image,
   Dimensions,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
-import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { auth, db, firebaseConfig } from '../../lib/firebase';
-import { signInWithPhoneNumber, PhoneAuthProvider, signInWithCredential } from 'firebase/auth';
+import { PhoneAuthProvider, signInWithCredential, signOut } from 'firebase/auth';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { router } from 'expo-router';
 import { Colors, FontFamilies, Spacing, BorderRadius } from '../../constants/theme';
@@ -25,15 +25,46 @@ import { Ionicons } from '@expo/vector-icons';
 const { width: SW, height: SH } = Dimensions.get('window');
 const HERO_H = SH * 0.42;
 
+// Hosted on the admin panel Vercel deployment — domain is authorized in Firebase Console
+const RECAPTCHA_URL = 'https://sowers-ministry-christmas-joy.vercel.app/recaptcha.html';
+
 export default function LoginScreen() {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
   const [loading, setLoading] = useState(false);
-  const [confirmResult, setConfirmResult] = useState<any>(null);
+  const [sessionInfo, setSessionInfo] = useState<string | null>(null);
   const [focusPhone, setFocusPhone] = useState(false);
   const [focusOtp, setFocusOtp] = useState(false);
-  const recaptchaVerifier = useRef<any>(null);
+
+  // reCAPTCHA state
+  const [recaptchaToken, setRecaptchaToken] = useState('');
+  const [webviewKey, setWebviewKey] = useState(0);
+  const pendingPhoneRef = useRef('');
+  const isPendingRef = useRef(false);
+
+  const handleWebViewMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === 'token' && data.token) {
+        setRecaptchaToken(data.token);
+        // If sendOTP was called before token arrived, proceed now
+        if (isPendingRef.current && pendingPhoneRef.current) {
+          isPendingRef.current = false;
+          proceedSendOTP(data.token, pendingPhoneRef.current);
+        }
+      } else if (data.type === 'error') {
+        console.warn('reCAPTCHA error:', data.error);
+        if (isPendingRef.current) {
+          isPendingRef.current = false;
+          setLoading(false);
+          Alert.alert('Verification Error', 'reCAPTCHA failed. Please try again.');
+        }
+      } else if (data.type === 'expired') {
+        setRecaptchaToken('');
+      }
+    } catch {}
+  };
 
   const sendOTP = async () => {
     if (phone.length < 10) {
@@ -41,9 +72,9 @@ export default function LoginScreen() {
       return;
     }
     setLoading(true);
-    try {
-      const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
+    const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
 
+    try {
       // Block unregistered numbers before sending SMS (saves cost)
       const snap = await getDocs(
         query(collection(db, 'users'), where('phone', '==', formattedPhone))
@@ -56,9 +87,39 @@ export default function LoginScreen() {
         setLoading(false);
         return;
       }
+    } catch {
+      setLoading(false);
+      Alert.alert('Error', 'Could not verify phone number. Check your connection.');
+      return;
+    }
 
-      const result = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifier.current);
-      setConfirmResult(result);
+    if (recaptchaToken) {
+      await proceedSendOTP(recaptchaToken, formattedPhone);
+    } else {
+      // Token not ready yet — set pending and wait for WebView to deliver it
+      pendingPhoneRef.current = formattedPhone;
+      isPendingRef.current = true;
+      // Stay in loading state; handleWebViewMessage will call proceedSendOTP
+    }
+  };
+
+  const proceedSendOTP = async (token: string, formattedPhone: string) => {
+    // Invalidate used token and reload WebView for next attempt
+    setRecaptchaToken('');
+    setWebviewKey((k) => k + 1);
+
+    try {
+      const res = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:sendVerificationCode?key=${firebaseConfig.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phoneNumber: formattedPhone, recaptchaToken: token }),
+        }
+      );
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message);
+      setSessionInfo(json.sessionInfo);
       setStep('otp');
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to send OTP. Please try again.');
@@ -71,28 +132,29 @@ export default function LoginScreen() {
       Alert.alert('Invalid OTP', 'Please enter the 6-digit OTP.');
       return;
     }
-    if (!confirmResult) {
+    if (!sessionInfo) {
       Alert.alert('Error', 'Please request OTP first.');
       return;
     }
     setLoading(true);
     try {
-      const userCredential = await confirmResult.confirm(otp);
+      const credential = PhoneAuthProvider.credential(sessionInfo, otp);
+      const userCredential = await signInWithCredential(auth, credential);
 
-      // Verify this phone number belongs to a registered employee
+      // Verify this phone belongs to a registered employee
       const phoneNumber = userCredential.user.phoneNumber ?? '';
       const snap = await getDocs(
         query(collection(db, 'users'), where('phone', '==', phoneNumber))
       );
       if (snap.empty) {
-        await auth.signOut();
+        await signOut(auth);
         Alert.alert(
           'Access Denied',
           "You don't have permission to sign in. Please contact the owner."
         );
         setStep('phone');
         setOtp('');
-        setConfirmResult(null);
+        setSessionInfo(null);
         setLoading(false);
         return;
       }
@@ -106,11 +168,15 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.root}>
-      {/* Invisible reCAPTCHA — required for real phone number OTP */}
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifier}
-        firebaseConfig={firebaseConfig}
-        attemptInvisibleVerification={true}
+      {/* Hidden WebView — silently loads reCAPTCHA and posts token back */}
+      <WebView
+        key={webviewKey}
+        source={{ uri: RECAPTCHA_URL }}
+        onMessage={handleWebViewMessage}
+        style={styles.hiddenWebView}
+        javaScriptEnabled
+        domStorageEnabled
+        originWhitelist={['*']}
       />
 
       {/* ── Scrollable area: hero photo + input card ── */}
@@ -261,7 +327,7 @@ export default function LoginScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.backLink}
-                onPress={() => { setStep('phone'); setConfirmResult(null); }}
+                onPress={() => { setStep('phone'); setSessionInfo(null); }}
               >
                 <Ionicons name="arrow-back" size={14} color={Colors.whiteAlpha60} />
                 <Text style={styles.backLinkText}>Change Number</Text>
@@ -281,6 +347,14 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.gradientEnd },
+
+  // Hidden WebView for reCAPTCHA token retrieval
+  hiddenWebView: {
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
 
   // Scrollable area
   scroll: { flex: 1 },
