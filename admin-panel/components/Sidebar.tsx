@@ -11,6 +11,7 @@ import {
   MapPin,
   LogOut,
   ChevronRight,
+  Trash2,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -19,6 +20,7 @@ const navItems = [
   { href: '/dashboard/children', label: 'Children Data', icon: Users },
   { href: '/dashboard/employees', label: 'Employees', icon: UserCog },
   { href: '/dashboard/areas', label: 'Areas', icon: MapPin },
+  { href: '/dashboard/recycle-bin', label: 'Recycle Bin', icon: Trash2 },
 ];
 
 export default function Sidebar() {

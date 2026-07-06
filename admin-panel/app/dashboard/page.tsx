@@ -19,25 +19,42 @@ interface Child {
   employeeId: string;
   employeeName: string;
   createdAt: any;
+  deleted?: boolean;
+}
+
+interface Employee {
+  id: string;
+  name: string;
+  totalEntries: number;
 }
 
 const AGE_GROUPS = [
-  { label: '0–4', min: 0, max: 4 },
-  { label: '5–8', min: 5, max: 8 },
-  { label: '9–12', min: 9, max: 12 },
-  { label: '13–15', min: 13, max: 15 },
-  { label: '16–18', min: 16, max: 18 },
+  { label: '0–2', min: 0, max: 2 },
+  { label: '3–5', min: 3, max: 5 },
+  { label: '6–8', min: 6, max: 8 },
+  { label: '9–11', min: 9, max: 11 },
+  { label: '12–14', min: 12, max: 14 },
 ];
 
 export default function DashboardPage() {
   const [children, setChildren] = useState<Child[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const q = query(collection(db, 'children'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
-      setChildren(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)));
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child));
+      setChildren(all.filter((c) => !c.deleted));
       setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'users'), orderBy('totalEntries', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setEmployees(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Employee)));
     });
     return () => unsub();
   }, []);
@@ -65,15 +82,9 @@ export default function DashboardPage() {
     .slice(0, 7)
     .map(([village, count]) => ({ village, count }));
 
-  const employeeData = Object.entries(
-    children.reduce((acc: any, c) => {
-      acc[c.employeeName] = (acc[c.employeeName] || 0) + 1;
-      return acc;
-    }, {})
-  )
-    .sort(([, a]: any, [, b]: any) => b - a)
+  const employeeData = employees
     .slice(0, 5)
-    .map(([name, count]) => ({ name, count }));
+    .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: e.totalEntries || 0 }));
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
@@ -207,7 +218,7 @@ export default function DashboardPage() {
           </h2>
           <div className="space-y-3">
             {employeeData.map((emp, i) => (
-              <div key={emp.name} className="flex items-center gap-3">
+              <div key={emp.id} className="flex items-center gap-3">
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                   i === 0 ? 'bg-gold text-black' : 'bg-gray-100 text-gray-500'
                 }`}>

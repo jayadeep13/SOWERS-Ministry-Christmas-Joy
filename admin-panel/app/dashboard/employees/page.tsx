@@ -1,12 +1,16 @@
 'use client';
 // app/dashboard/employees/page.tsx
 import { useEffect, useState, useMemo } from 'react';
-import { db } from '../../../lib/firebase';
+import { db, auth, firebaseConfig } from '../../../lib/firebase';
+import { phoneToEmployeeEmail } from '../../../lib/employeeAuth';
+import { initializeApp, getApps, deleteApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import {
-  collection, onSnapshot, query, orderBy, setDoc, doc, serverTimestamp, deleteDoc
+  collection, onSnapshot, query, orderBy, setDoc, doc, serverTimestamp, deleteDoc, updateDoc
 } from 'firebase/firestore';
 import {
-  UserPlus, Phone, Trash2, Loader2, X, CheckCircle, ChevronDown, ChevronUp, MapPin, Baby
+  UserPlus, Phone, Trash2, Loader2, X, CheckCircle, ChevronDown, ChevronUp, MapPin, Baby,
+  KeyRound, ShieldAlert,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -16,6 +20,9 @@ interface Employee {
   phone: string;
   totalEntries: number;
   createdAt: any;
+  pendingPinReset?: string;
+  pinResetAt?: any;
+  pinResetReason?: 'manual' | 'auto-lockout';
 }
 
 interface Child {
@@ -38,8 +45,10 @@ export default function EmployeesPage() {
   const [addLoading, setAddLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
-  const [form, setForm] = useState({ name: '', phone: '' });
+  const [form, setForm] = useState({ name: '', phone: '', pin: '' });
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('totalEntries', 'desc'));
@@ -76,12 +85,31 @@ export default function EmployeesPage() {
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (!/^\d{6}$/.test(form.pin)) {
+      setError('PIN must be exactly 6 digits.');
+      return;
+    }
     setAddLoading(true);
     try {
       const phone = form.phone.startsWith('+91') ? form.phone : `+91${form.phone}`;
-      const docRef = doc(collection(db, 'users'));
-      await setDoc(docRef, {
-        uid: docRef.id,
+
+      // Create the Firebase Auth account on a secondary, isolated app instance
+      // so this doesn't sign the admin out of their own session.
+      const creatorApp = getApps().find((a) => a.name === 'employee-creator')
+        ?? initializeApp(firebaseConfig, 'employee-creator');
+      const creatorAuth = getAuth(creatorApp);
+
+      const credential = await createUserWithEmailAndPassword(
+        creatorAuth,
+        phoneToEmployeeEmail(form.phone),
+        form.pin
+      );
+      const uid = credential.user.uid;
+      await signOut(creatorAuth);
+      await deleteApp(creatorApp);
+
+      await setDoc(doc(db, 'users', uid), {
+        uid,
         name: form.name,
         phone,
         totalEntries: 0,
@@ -89,10 +117,19 @@ export default function EmployeesPage() {
         addedByAdmin: true,
       });
       setSuccess(`Employee "${form.name}" added successfully!`);
-      setForm({ name: '', phone: '' });
+      setForm({ name: '', phone: '', pin: '' });
       setTimeout(() => { setSuccess(''); setShowAdd(false); }, 2500);
     } catch (err: any) {
-      setError(err.message || 'Failed to add employee.');
+      const code = err?.code || '';
+      if (code === 'auth/email-already-in-use') {
+        setError('An employee with this mobile number already exists.');
+      } else if (code === 'auth/weak-password') {
+        setError('PIN must be exactly 6 digits.');
+      } else if (code === 'auth/invalid-email') {
+        setError('Please enter a valid 10-digit mobile number.');
+      } else {
+        setError(err.message || 'Failed to add employee.');
+      }
     }
     setAddLoading(false);
   };
@@ -100,6 +137,36 @@ export default function EmployeesPage() {
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Remove employee "${name}" from the list? This won't delete their recorded entries.`)) return;
     await deleteDoc(doc(db, 'users', id));
+  };
+
+  const handleResetPin = async (id: string, name: string) => {
+    if (!confirm(`Generate a new PIN for "${name}"? Their current PIN will stop working immediately.`)) return;
+    setResettingId(id);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/employees/reset-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({ employeeUid: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reset PIN');
+    } catch (err: any) {
+      alert(`Could not reset PIN: ${err.message || 'unknown error'}`);
+    }
+    setResettingId(null);
+  };
+
+  const handleDismissPendingPin = async (id: string) => {
+    setDismissingId(id);
+    try {
+      await updateDoc(doc(db, 'users', id), {
+        pendingPinReset: null,
+        pinResetAt: null,
+        pinResetReason: null,
+      });
+    } catch {}
+    setDismissingId(null);
   };
 
   const totalEntries = employees.reduce((s, e) => s + (e.totalEntries || 0), 0);
@@ -230,14 +297,48 @@ export default function EmployeesPage() {
                       }
                     </div>
 
+                    {/* Reset PIN */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleResetPin(emp.id, emp.name); }}
+                      disabled={resettingId === emp.id}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-gold/10 text-gray-300 hover:text-gold transition-all disabled:opacity-100"
+                      title="Reset PIN"
+                    >
+                      {resettingId === emp.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+                    </button>
+
                     {/* Delete */}
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(emp.id, emp.name); }}
                       className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all"
+                      title="Remove employee"
                     >
                       <Trash2 size={15} />
                     </button>
                   </div>
+
+                  {/* Pending PIN reset banner */}
+                  {emp.pendingPinReset && (
+                    <div className="bg-gold/5 border-t border-gold/20 px-6 py-3 flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert size={16} className="text-gold flex-shrink-0" />
+                        <p className="text-sm text-gray-700">
+                          {emp.pinResetReason === 'auto-lockout'
+                            ? <>PIN auto-reset after too many failed attempts.</>
+                            : <>PIN was manually reset.</>}
+                          {' '}New PIN: <span className="font-mono font-bold text-gray-900 tracking-widest">{emp.pendingPinReset}</span>
+                          {' '}— share this with {emp.name}.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDismissPendingPin(emp.id)}
+                        disabled={dismissingId === emp.id}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 transition-colors flex-shrink-0 disabled:opacity-40"
+                      >
+                        {dismissingId === emp.id ? 'Clearing…' : 'Mark as delivered'}
+                      </button>
+                    </div>
+                  )}
 
                   {/* Expanded children list */}
                   {isExpanded && (
@@ -347,6 +448,31 @@ export default function EmployeesPage() {
                       required
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-gold text-xs uppercase tracking-widest font-semibold mb-2">
+                    PIN (6 digits)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      className="input-field flex-1 tracking-widest font-mono"
+                      placeholder="e.g. 483920"
+                      value={form.pin}
+                      onChange={(e) => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                      maxLength={6}
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, pin: Math.floor(100000 + Math.random() * 900000).toString() }))}
+                      className="px-3 rounded-xl border border-gray-200 text-gray-500 text-xs hover:bg-gray-100 hover:text-gray-800 transition-colors whitespace-nowrap"
+                    >
+                      Generate
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">The employee will log in with their mobile number and this PIN.</p>
                 </div>
 
                 {error && (

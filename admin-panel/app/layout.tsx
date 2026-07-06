@@ -5,7 +5,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Sowers Ministry — Admin Panel',
   description: 'Christmas Joy Programme — Admin Dashboard',
-  icons: { icon: '/favicon.ico' },
+  icons: { icon: '/logo.webp', shortcut: '/logo.webp' },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

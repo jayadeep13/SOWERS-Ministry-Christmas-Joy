@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { db, auth } from '../../../lib/firebase';
-import { collection, onSnapshot, query, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
-import { Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2, CheckCircle } from 'lucide-react';
+import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2, CheckCircle, Trash2 } from 'lucide-react';
 import Papa from 'papaparse';
 import { format, isToday, isThisWeek, isThisMonth, parseISO, startOfDay, endOfDay } from 'date-fns';
 
@@ -18,6 +18,7 @@ interface Child {
   employeeName: string;
   employeePhone: string;
   createdAt: any;
+  deleted?: boolean;
 }
 
 type DateFilter = 'all' | 'today' | 'week' | 'month' | 'custom';
@@ -38,6 +39,7 @@ export default function ChildrenPage() {
   const [children, setChildren] = useState<Child[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Add-child modal state
   const [showAdd, setShowAdd] = useState(false);
@@ -67,7 +69,8 @@ export default function ChildrenPage() {
     const unsub = onSnapshot(
       q,
       (snap) => {
-        setChildren(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)));
+        const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child));
+        setChildren(all.filter((c) => !c.deleted));
         setLoading(false);
         setFetchError('');
       },
@@ -101,7 +104,7 @@ export default function ChildrenPage() {
     if (!firstName.trim()) { setAddError('First name is required'); return; }
     if (!lastName.trim()) { setAddError('Last name is required'); return; }
     if (!parentName.trim()) { setAddError('Parent / guardian name is required'); return; }
-    if (!age.trim() || isNaN(Number(age)) || Number(age) < 1) { setAddError('Enter a valid age'); return; }
+    if (!age.trim() || isNaN(Number(age)) || Number(age) < 1 || Number(age) > 14) { setAddError('Enter a valid age (up to 14 years)'); return; }
     if (!gender) { setAddError('Please select a gender'); return; }
     if (!village) { setAddError('Please select a village / area'); return; }
     setAddError('');
@@ -116,7 +119,7 @@ export default function ChildrenPage() {
         gender,
         village,
         employeeId: adminUser?.uid ?? 'admin',
-        employeeName: 'Admin',
+        employeeName: adminUser?.email ?? 'Admin',
         employeePhone: adminUser?.email ?? '',
         createdAt: serverTimestamp(),
       });
@@ -127,6 +130,20 @@ export default function ChildrenPage() {
       setAddError(err.message || 'Failed to save. Check your connection.');
     }
     setAddLoading(false);
+  };
+
+  const handleSoftDelete = async (id: string, name: string) => {
+    if (!confirm(`Move "${name}" to the recycle bin?`)) return;
+    setDeletingId(id);
+    try {
+      await updateDoc(doc(db, 'children', id), { deleted: true, deletedAt: serverTimestamp() });
+    } catch (err: any) {
+      alert(
+        `Could not delete "${name}": ${err.message || err.code || 'unknown error'}\n\n` +
+        `This usually means Firestore security rules don't allow updating the "children" collection.`
+      );
+    }
+    setDeletingId(null);
   };
 
   const villages = useMemo(() => Array.from(new Set(children.map((c) => c.village).filter(Boolean) as string[])).sort(), [children]);
@@ -333,12 +350,13 @@ export default function ChildrenPage() {
                 <input
                   type="number"
                   min={1}
-                  max={99}
+                  max={14}
                   value={addForm.age}
                   onChange={(e) => setAddForm((f) => ({ ...f, age: e.target.value }))}
                   placeholder="e.g. 8"
                   className="input-field w-28"
                 />
+                <p className="text-xs text-gray-400 mt-1">Up to 14 years</p>
               </div>
 
               {/* Gender */}
@@ -505,6 +523,8 @@ export default function ChildrenPage() {
             <input
               className="input-field w-20"
               type="number"
+              min={0}
+              max={14}
               placeholder="Age min"
               value={ageMin}
               onChange={(e) => { setAgeMin(e.target.value); setPage(0); }}
@@ -513,6 +533,8 @@ export default function ChildrenPage() {
             <input
               className="input-field w-20"
               type="number"
+              min={0}
+              max={14}
               placeholder="Age max"
               value={ageMax}
               onChange={(e) => { setAgeMax(e.target.value); setPage(0); }}
@@ -547,19 +569,22 @@ export default function ChildrenPage() {
                     </div>
                   </th>
                 ))}
+                <th className="px-4 py-3 text-right text-gray-500 font-semibold text-xs uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16">
+                  <td colSpan={8} className="text-center py-16">
                     <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin mx-auto" />
                     <p className="text-gray-400 text-sm mt-3">Loading data...</p>
                   </td>
                 </tr>
               ) : fetchError ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16">
+                  <td colSpan={8} className="text-center py-16">
                     <p className="text-red-500 font-medium text-sm">Failed to load data</p>
                     <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">{fetchError}</p>
                     <p className="text-gray-400 text-xs mt-2">Check Firestore security rules — the admin account may not have read permission on the <code className="bg-gray-100 px-1 rounded">children</code> collection.</p>
@@ -567,7 +592,7 @@ export default function ChildrenPage() {
                 </tr>
               ) : paginated.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16">
+                  <td colSpan={8} className="text-center py-16">
                     <p className="text-gray-400 text-base">No records found</p>
                     {hasActiveFilters && (
                       <button onClick={clearAllFilters} className="text-gold text-sm mt-2 hover:underline">
@@ -609,6 +634,20 @@ export default function ChildrenPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs">
                       {child.createdAt?.toDate ? format(child.createdAt.toDate(), 'dd MMM yy') : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => handleSoftDelete(child.id, `${child.firstName} ${child.lastName}`)}
+                        disabled={deletingId === child.id}
+                        className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-40"
+                        title="Move to recycle bin"
+                      >
+                        {deletingId === child.id ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={15} />
+                        )}
+                      </button>
                     </td>
                   </tr>
                 ))
