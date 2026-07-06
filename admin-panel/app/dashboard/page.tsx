@@ -1,25 +1,21 @@
 'use client';
 // app/dashboard/page.tsx
 import { useEffect, useState } from 'react';
-import { db } from '../../lib/firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db, auth } from '../../lib/firebase';
+import { doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
-import { Users, Baby, Building2, UserCheck } from 'lucide-react';
+import { Users, Baby, Building2, UserCheck, RefreshCw, Loader2 } from 'lucide-react';
 
-interface Child {
-  id: string;
-  firstName: string;
-  lastName: string;
-  age: number;
-  gender: string;
-  village: string;
-  employeeId: string;
-  employeeName: string;
-  createdAt: any;
-  deleted?: boolean;
+interface StatsSummary {
+  totalChildren?: number;
+  maleCount?: number;
+  femaleCount?: number;
+  otherCount?: number;
+  ageGroups?: Record<string, number>;
+  villageCounts?: Record<string, number>;
 }
 
 interface Employee {
@@ -29,24 +25,21 @@ interface Employee {
 }
 
 const AGE_GROUPS = [
-  { label: '0–2', min: 0, max: 2 },
-  { label: '3–5', min: 3, max: 5 },
-  { label: '6–8', min: 6, max: 8 },
-  { label: '9–11', min: 9, max: 11 },
-  { label: '12–14', min: 12, max: 14 },
+  { key: '0-2', label: '0–2' },
+  { key: '3-5', label: '3–5' },
+  { key: '6-8', label: '6–8' },
+  { key: '9-11', label: '9–11' },
+  { key: '12-14', label: '12–14' },
 ];
 
 export default function DashboardPage() {
-  const [children, setChildren] = useState<Child[]>([]);
+  const [stats, setStats] = useState<StatsSummary | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recalculating, setRecalculating] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, 'children'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child));
-      setChildren(all.filter((c) => !c.deleted));
-      setLoading(false);
+    const unsub = onSnapshot(doc(db, 'stats', 'summary'), (snap) => {
+      setStats(snap.exists() ? (snap.data() as StatsSummary) : {});
     });
     return () => unsub();
   }, []);
@@ -59,12 +52,14 @@ export default function DashboardPage() {
     return () => unsub();
   }, []);
 
-  const males = children.filter((c) => c.gender === 'Male').length;
-  const females = children.filter((c) => c.gender === 'Female').length;
+  const totalChildren = stats?.totalChildren ?? 0;
+  const males = stats?.maleCount ?? 0;
+  const females = stats?.femaleCount ?? 0;
+  const villageCounts = stats?.villageCounts ?? {};
 
   const ageData = AGE_GROUPS.map((g) => ({
     label: g.label,
-    count: children.filter((c) => c.age >= g.min && c.age <= g.max).length,
+    count: stats?.ageGroups?.[g.key] ?? 0,
   }));
 
   const genderData = [
@@ -72,19 +67,31 @@ export default function DashboardPage() {
     { name: 'Female', value: females },
   ];
 
-  const villageData = Object.entries(
-    children.reduce((acc: any, c) => {
-      acc[c.village] = (acc[c.village] || 0) + 1;
-      return acc;
-    }, {})
-  )
-    .sort(([, a]: any, [, b]: any) => b - a)
+  const villageData = Object.entries(villageCounts)
+    .sort(([, a], [, b]) => (b as number) - (a as number))
     .slice(0, 7)
-    .map(([village, count]) => ({ village, count }));
+    .map(([village, count]) => ({ village, count: count as number }));
 
   const employeeData = employees
     .slice(0, 5)
     .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: e.totalEntries || 0 }));
+
+  const handleRecalculate = async () => {
+    if (!confirm('Recalculate dashboard stats from every record in Children Data? This does one full scan and rebuilds the counters.')) return;
+    setRecalculating(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      const res = await fetch('/api/stats/recalculate', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to recalculate');
+    } catch (err: any) {
+      alert(`Could not recalculate stats: ${err.message || 'unknown error'}`);
+    }
+    setRecalculating(false);
+  };
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
@@ -101,9 +108,20 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Page Title */}
-      <div>
-        <h1 className="font-serif text-3xl text-gray-900">Dashboard</h1>
-        <p className="text-gray-400 text-sm mt-1">Christmas Joy Programme · Live Overview</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="font-serif text-3xl text-gray-900">Dashboard</h1>
+          <p className="text-gray-400 text-sm mt-1">Christmas Joy Programme · Live Overview</p>
+        </div>
+        <button
+          onClick={handleRecalculate}
+          disabled={recalculating}
+          title="Rebuild these stats from a full scan of Children Data — use if numbers ever look off"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-100 text-gray-500 text-xs hover:bg-gray-200 hover:text-gray-800 transition-all border border-gray-200 disabled:opacity-50"
+        >
+          {recalculating ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          Recalculate Stats
+        </button>
       </div>
 
       {/* Stat Cards */}
@@ -111,7 +129,7 @@ export default function DashboardPage() {
         <StatCard
           icon={<Users className="w-6 h-6 text-gold" />}
           label="Total Children"
-          value={children.length}
+          value={totalChildren}
           sub="All registrations"
           accent
         />
@@ -119,18 +137,18 @@ export default function DashboardPage() {
           icon={<Baby className="w-6 h-6 text-blue-500" />}
           label="Male"
           value={males}
-          sub={`${children.length ? Math.round((males / children.length) * 100) : 0}% of total`}
+          sub={`${totalChildren ? Math.round((males / totalChildren) * 100) : 0}% of total`}
         />
         <StatCard
           icon={<Baby className="w-6 h-6 text-pink-500" />}
           label="Female"
           value={females}
-          sub={`${children.length ? Math.round((females / children.length) * 100) : 0}% of total`}
+          sub={`${totalChildren ? Math.round((females / totalChildren) * 100) : 0}% of total`}
         />
         <StatCard
           icon={<Building2 className="w-6 h-6 text-emerald-500" />}
           label="Villages"
-          value={new Set(children.map((c) => c.village)).size}
+          value={Object.keys(villageCounts).length}
           sub="Unique villages"
         />
       </div>

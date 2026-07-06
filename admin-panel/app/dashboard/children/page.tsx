@@ -1,11 +1,18 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { db, auth } from '../../../lib/firebase';
-import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
-import { Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2, CheckCircle, Trash2 } from 'lucide-react';
+import { applyStatsDelta } from '../../../lib/stats';
+import {
+  collection, onSnapshot, query, orderBy, where, limit, startAfter,
+  getDocs, addDoc, updateDoc, doc, serverTimestamp, QueryDocumentSnapshot, DocumentData,
+} from 'firebase/firestore';
+import {
+  Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2,
+  CheckCircle, Trash2, RefreshCw, Layers,
+} from 'lucide-react';
 import Papa from 'papaparse';
-import { format, isToday, isThisWeek, isThisMonth, parseISO, startOfDay, endOfDay } from 'date-fns';
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 
 interface Child {
   id: string;
@@ -15,11 +22,14 @@ interface Child {
   age: number;
   gender: string;
   village: string;
+  employeeId: string;
   employeeName: string;
   employeePhone: string;
   createdAt: any;
   deleted?: boolean;
 }
+
+interface EmployeeOption { id: string; name: string; }
 
 type DateFilter = 'all' | 'today' | 'week' | 'month' | 'custom';
 
@@ -32,6 +42,7 @@ const DATE_CHIPS: { key: DateFilter; label: string }[] = [
 ];
 
 const GENDERS = ['Male', 'Female', 'Other'];
+const PAGE_SIZE = 50;
 
 const emptyForm = { firstName: '', lastName: '', parentName: '', age: '', gender: '', village: '' };
 
@@ -41,6 +52,14 @@ export default function ChildrenPage() {
   const [fetchError, setFetchError] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const [pageIndex, setPageIndex] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const pagesCacheRef = useRef<Record<number, Child[]>>({});
+  const pageCursorsRef = useRef<Record<number, QueryDocumentSnapshot<DocumentData> | null>>({});
+
+  const [searchAllResults, setSearchAllResults] = useState<Child[] | null>(null);
+  const [searchAllLoading, setSearchAllLoading] = useState(false);
+
   // Add-child modal state
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState(emptyForm);
@@ -48,45 +67,112 @@ export default function ChildrenPage() {
   const [addError, setAddError] = useState('');
   const [addSuccess, setAddSuccess] = useState('');
   const [areas, setAreas] = useState<string[]>([]);
+  const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
 
   const [search, setSearch] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
   const [villageFilter, setVillageFilter] = useState('');
-  const [employeeFilter, setEmployeeFilter] = useState('');
+  const [employeeFilter, setEmployeeFilter] = useState(''); // stores employee uid
   const [ageMin, setAgeMin] = useState('');
   const [ageMax, setAgeMax] = useState('');
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-
-  const [sortKey, setSortKey] = useState<keyof Child>('createdAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 15;
 
+  // Only one equality filter can be pushed server-side at a time (matches the
+  // composite indexes we have: employeeId+createdAt, village+createdAt, gender+createdAt).
+  // Priority: employee > village > gender. Any others still apply, just client-side
+  // on whatever page is currently loaded.
+  const activeServerFilterField: 'employee' | 'village' | 'gender' | null = employeeFilter
+    ? 'employee'
+    : villageFilter
+    ? 'village'
+    : genderFilter
+    ? 'gender'
+    : null;
+
+  const buildConstraints = () => {
+    const constraints: any[] = [];
+    if (activeServerFilterField === 'employee') constraints.push(where('employeeId', '==', employeeFilter));
+    else if (activeServerFilterField === 'village') constraints.push(where('village', '==', villageFilter));
+    else if (activeServerFilterField === 'gender') constraints.push(where('gender', '==', genderFilter));
+
+    const now = new Date();
+    if (dateFilter === 'today') {
+      constraints.push(where('createdAt', '>=', startOfDay(now)), where('createdAt', '<=', endOfDay(now)));
+    } else if (dateFilter === 'week') {
+      constraints.push(
+        where('createdAt', '>=', startOfWeek(now, { weekStartsOn: 1 })),
+        where('createdAt', '<=', endOfWeek(now, { weekStartsOn: 1 }))
+      );
+    } else if (dateFilter === 'month') {
+      constraints.push(where('createdAt', '>=', startOfMonth(now)), where('createdAt', '<=', endOfMonth(now)));
+    } else if (dateFilter === 'custom' && customFrom && customTo) {
+      constraints.push(
+        where('createdAt', '>=', startOfDay(parseISO(customFrom))),
+        where('createdAt', '<=', endOfDay(parseISO(customTo)))
+      );
+    }
+    constraints.push(orderBy('createdAt', sortDir));
+    return constraints;
+  };
+
+  const fetchPage = async (targetIndex: number) => {
+    const cached = pagesCacheRef.current[targetIndex];
+    if (cached) {
+      setChildren(cached);
+      setPageIndex(targetIndex);
+      setHasMore(cached.length === PAGE_SIZE);
+      return;
+    }
+    setLoading(true);
+    setFetchError('');
+    try {
+      const base = buildConstraints();
+      const cursor = targetIndex > 0 ? pageCursorsRef.current[targetIndex - 1] : null;
+      const qArgs = cursor ? [...base, startAfter(cursor), limit(PAGE_SIZE)] : [...base, limit(PAGE_SIZE)];
+      const snap = await getDocs(query(collection(db, 'children'), ...qArgs));
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child));
+      pagesCacheRef.current[targetIndex] = rows;
+      pageCursorsRef.current[targetIndex] = snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null;
+      setChildren(rows);
+      setPageIndex(targetIndex);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch (err: any) {
+      console.error('children fetch error:', err);
+      setFetchError(err.message || 'Failed to load data');
+    }
+    setLoading(false);
+  };
+
+  const resetAndLoad = () => {
+    pagesCacheRef.current = {};
+    pageCursorsRef.current = {};
+    setSearchAllResults(null);
+    fetchPage(0);
+  };
+
+  // Re-fetch page 1 whenever a server-side filter changes. Search text and age
+  // range are applied client-side to whatever's already loaded, so they don't
+  // trigger a re-fetch.
   useEffect(() => {
-    const q = query(collection(db, 'children'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const all = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child));
-        setChildren(all.filter((c) => !c.deleted));
-        setLoading(false);
-        setFetchError('');
-      },
-      (err) => {
-        console.error('children fetch error:', err);
-        setFetchError(err.message);
-        setLoading(false);
-      }
-    );
-    return () => unsub();
-  }, []);
+    resetAndLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeFilter, villageFilter, genderFilter, dateFilter, customFrom, customTo, sortDir]);
 
   useEffect(() => {
     const q = query(collection(db, 'areas'), orderBy('name', 'asc'));
     const unsub = onSnapshot(q, (snap) => {
       setAreas(snap.docs.map((d) => d.data().name as string));
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, 'users'), orderBy('name', 'asc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setEmployeeOptions(snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) || 'Unknown' })));
     });
     return () => unsub();
   }, []);
@@ -111,11 +197,12 @@ export default function ChildrenPage() {
     setAddLoading(true);
     try {
       const adminUser = auth.currentUser;
+      const ageNum = parseInt(age);
       await addDoc(collection(db, 'children'), {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         parentName: parentName.trim(),
-        age: parseInt(age),
+        age: ageNum,
         gender,
         village,
         employeeId: adminUser?.uid ?? 'admin',
@@ -123,20 +210,28 @@ export default function ChildrenPage() {
         employeePhone: adminUser?.email ?? '',
         createdAt: serverTimestamp(),
       });
+      await applyStatsDelta(db, gender, ageNum, village, 1);
       setAddSuccess(`${firstName.trim()} ${lastName.trim()} added!`);
       setAddForm(emptyForm);
-      setTimeout(() => { setAddSuccess(''); setShowAdd(false); }, 2000);
+      setTimeout(() => { setAddSuccess(''); setShowAdd(false); resetAndLoad(); }, 2000);
     } catch (err: any) {
       setAddError(err.message || 'Failed to save. Check your connection.');
     }
     setAddLoading(false);
   };
 
-  const handleSoftDelete = async (id: string, name: string) => {
+  const handleSoftDelete = async (child: Child) => {
+    const name = `${child.firstName} ${child.lastName}`;
     if (!confirm(`Move "${name}" to the recycle bin?`)) return;
-    setDeletingId(id);
+    setDeletingId(child.id);
     try {
-      await updateDoc(doc(db, 'children', id), { deleted: true, deletedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'children', child.id), { deleted: true, deletedAt: serverTimestamp() });
+      await applyStatsDelta(db, child.gender, child.age, child.village, -1);
+      setChildren((prev) => prev.filter((c) => c.id !== child.id));
+      if (pagesCacheRef.current[pageIndex]) {
+        pagesCacheRef.current[pageIndex] = pagesCacheRef.current[pageIndex].filter((c) => c.id !== child.id);
+      }
+      setSearchAllResults((prev) => (prev ? prev.filter((c) => c.id !== child.id) : prev));
     } catch (err: any) {
       alert(
         `Could not delete "${name}": ${err.message || err.code || 'unknown error'}\n\n` +
@@ -146,12 +241,27 @@ export default function ChildrenPage() {
     setDeletingId(null);
   };
 
-  const villages = useMemo(() => Array.from(new Set(children.map((c) => c.village).filter(Boolean) as string[])).sort(), [children]);
-  const employees = useMemo(() => Array.from(new Set(children.map((c) => c.employeeName).filter(Boolean) as string[])).sort(), [children]);
+  const handleSearchAll = async () => {
+    setSearchAllLoading(true);
+    try {
+      const base = buildConstraints();
+      const snap = await getDocs(query(collection(db, 'children'), ...base, limit(20000)));
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)).filter((c) => !c.deleted);
+      setSearchAllResults(rows);
+    } catch (err: any) {
+      alert(`Could not load all matching records: ${err.message || 'unknown error'}`);
+    }
+    setSearchAllLoading(false);
+  };
 
-  const filtered = useMemo(() => {
-    let data = [...children];
+  const baseRows = searchAllResults ?? children;
 
+  const rowsFiltered = useMemo(() => {
+    let data = baseRows.filter((c) => !c.deleted);
+    if (activeServerFilterField !== 'village' && villageFilter) data = data.filter((c) => c.village === villageFilter);
+    if (activeServerFilterField !== 'gender' && genderFilter) data = data.filter((c) => c.gender === genderFilter);
+    if (ageMin) data = data.filter((c) => c.age >= parseInt(ageMin));
+    if (ageMax) data = data.filter((c) => c.age <= parseInt(ageMax));
     if (search) {
       const s = search.toLowerCase();
       data = data.filter(
@@ -163,65 +273,19 @@ export default function ChildrenPage() {
           c.employeeName?.toLowerCase().includes(s)
       );
     }
-
-    if (genderFilter) data = data.filter((c) => c.gender === genderFilter);
-    if (villageFilter) data = data.filter((c) => c.village === villageFilter);
-    if (employeeFilter) data = data.filter((c) => c.employeeName === employeeFilter);
-    if (ageMin) data = data.filter((c) => c.age >= parseInt(ageMin));
-    if (ageMax) data = data.filter((c) => c.age <= parseInt(ageMax));
-
-    if (dateFilter !== 'all') {
-      data = data.filter((c) => {
-        const d: Date = c.createdAt?.toDate?.() ?? null;
-        if (!d) return false;
-        if (dateFilter === 'today') return isToday(d);
-        if (dateFilter === 'week') return isThisWeek(d, { weekStartsOn: 1 });
-        if (dateFilter === 'month') return isThisMonth(d);
-        if (dateFilter === 'custom') {
-          const from = customFrom ? startOfDay(parseISO(customFrom)) : null;
-          const to = customTo ? endOfDay(parseISO(customTo)) : null;
-          if (from && d < from) return false;
-          if (to && d > to) return false;
-          return true;
-        }
-        return true;
-      });
-    }
-
-    data.sort((a, b) => {
-      let aVal: any = a[sortKey];
-      let bVal: any = b[sortKey];
-      if (sortKey === 'createdAt') {
-        aVal = aVal?.toDate?.()?.getTime() ?? 0;
-        bVal = bVal?.toDate?.()?.getTime() ?? 0;
-      }
-      if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
-
     return data;
-  }, [children, search, genderFilter, villageFilter, employeeFilter, ageMin, ageMax, dateFilter, customFrom, customTo, sortKey, sortDir]);
-
-  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-
-  const handleSort = (key: keyof Child) => {
-    if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortDir('asc'); }
-    setPage(0);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseRows, villageFilter, genderFilter, ageMin, ageMax, search, activeServerFilterField]);
 
   const clearAllFilters = () => {
     setSearch(''); setGenderFilter(''); setVillageFilter(''); setEmployeeFilter('');
     setAgeMin(''); setAgeMax(''); setDateFilter('all'); setCustomFrom(''); setCustomTo('');
-    setPage(0);
   };
 
-  const hasActiveFilters = search || genderFilter || villageFilter || employeeFilter || ageMin || ageMax || dateFilter !== 'all';
+  const hasActiveFilters = !!(search || genderFilter || villageFilter || employeeFilter || ageMin || ageMax || dateFilter !== 'all');
 
   const exportCSV = () => {
-    const data = filtered.map((c) => ({
+    const data = rowsFiltered.map((c) => ({
       'First Name': c.firstName,
       'Last Name': c.lastName,
       'Parent Name': c.parentName,
@@ -241,12 +305,10 @@ export default function ChildrenPage() {
     a.click();
   };
 
-  const SortIcon = ({ col }: { col: keyof Child }) =>
-    sortKey === col
-      ? sortDir === 'asc'
-        ? <ChevronUp size={14} className="text-gold" />
-        : <ChevronDown size={14} className="text-gold" />
-      : <ChevronUp size={14} className="text-gray-300" />;
+  const SortIcon = () =>
+    sortDir === 'asc'
+      ? <ChevronUp size={14} className="text-gold" />
+      : <ChevronDown size={14} className="text-gold" />;
 
   return (
     <div className="space-y-5">
@@ -255,8 +317,10 @@ export default function ChildrenPage() {
         <div>
           <h1 className="font-serif text-3xl text-gray-900">Children Data</h1>
           <p className="text-gray-400 text-sm mt-1">
-            {filtered.length} record{filtered.length !== 1 ? 's' : ''}{' '}
-            {hasActiveFilters && <span className="text-gold font-medium">(filtered)</span>}
+            {searchAllResults
+              ? <>{rowsFiltered.length} matching record{rowsFiltered.length !== 1 ? 's' : ''} loaded</>
+              : <>Page {pageIndex + 1} · {rowsFiltered.length} shown</>}
+            {' '}{hasActiveFilters && <span className="text-gold font-medium">(filtered)</span>}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -269,6 +333,13 @@ export default function ChildrenPage() {
               Clear filters
             </button>
           )}
+          <button
+            onClick={resetAndLoad}
+            title="Refresh"
+            className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200"
+          >
+            <RefreshCw size={16} />
+          </button>
           <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200">
             <Download size={16} />
             Export CSV
@@ -429,7 +500,7 @@ export default function ChildrenPage() {
           {DATE_CHIPS.map(({ key, label }) => (
             <button
               key={key}
-              onClick={() => { setDateFilter(key); setPage(0); }}
+              onClick={() => setDateFilter(key)}
               className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${
                 dateFilter === key
                   ? 'bg-gold text-black border-gold'
@@ -448,7 +519,7 @@ export default function ChildrenPage() {
               <input
                 type="date"
                 value={customFrom}
-                onChange={(e) => { setCustomFrom(e.target.value); setPage(0); }}
+                onChange={(e) => setCustomFrom(e.target.value)}
                 className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-gold"
               />
             </div>
@@ -457,7 +528,7 @@ export default function ChildrenPage() {
               <input
                 type="date"
                 value={customTo}
-                onChange={(e) => { setCustomTo(e.target.value); setPage(0); }}
+                onChange={(e) => setCustomTo(e.target.value)}
                 className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 text-sm focus:outline-none focus:border-gold"
               />
             </div>
@@ -484,25 +555,25 @@ export default function ChildrenPage() {
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               className="input-field w-full pl-9"
-              placeholder="Search name, village, parent, employee..."
+              placeholder={searchAllResults ? 'Search loaded records...' : 'Search this page — or load all to search everything'}
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              onChange={(e) => setSearch(e.target.value)}
             />
           </div>
 
           <select
             className="input-field pr-8 min-w-[160px]"
             value={employeeFilter}
-            onChange={(e) => { setEmployeeFilter(e.target.value); setPage(0); }}
+            onChange={(e) => setEmployeeFilter(e.target.value)}
           >
             <option value="">All Employees</option>
-            {employees.map((e) => <option key={e} value={e}>{e}</option>)}
+            {employeeOptions.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
 
           <select
             className="input-field pr-8"
             value={genderFilter}
-            onChange={(e) => { setGenderFilter(e.target.value); setPage(0); }}
+            onChange={(e) => setGenderFilter(e.target.value)}
           >
             <option value="">All Genders</option>
             <option value="Male">Male</option>
@@ -513,10 +584,10 @@ export default function ChildrenPage() {
           <select
             className="input-field pr-8 min-w-[140px]"
             value={villageFilter}
-            onChange={(e) => { setVillageFilter(e.target.value); setPage(0); }}
+            onChange={(e) => setVillageFilter(e.target.value)}
           >
             <option value="">All Villages</option>
-            {villages.map((v) => <option key={v} value={v}>{v}</option>)}
+            {areas.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
 
           <div className="flex items-center gap-2">
@@ -527,7 +598,7 @@ export default function ChildrenPage() {
               max={14}
               placeholder="Age min"
               value={ageMin}
-              onChange={(e) => { setAgeMin(e.target.value); setPage(0); }}
+              onChange={(e) => setAgeMin(e.target.value)}
             />
             <span className="text-gray-300 text-sm">–</span>
             <input
@@ -537,9 +608,34 @@ export default function ChildrenPage() {
               max={14}
               placeholder="Age max"
               value={ageMax}
-              onChange={(e) => { setAgeMax(e.target.value); setPage(0); }}
+              onChange={(e) => setAgeMax(e.target.value)}
             />
           </div>
+        </div>
+
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+          <p className="text-xs text-gray-400">
+            {searchAllResults
+              ? 'Searching every record matching your Date/Employee/Village/Gender filters.'
+              : 'Search and export only cover the currently loaded page — click "Load All Matching" to search or export everything.'}
+          </p>
+          {searchAllResults ? (
+            <button
+              onClick={() => setSearchAllResults(null)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs hover:bg-gray-200 transition-colors flex-shrink-0"
+            >
+              <X size={12} /> Back to Paged View
+            </button>
+          ) : (
+            <button
+              onClick={handleSearchAll}
+              disabled={searchAllLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold/10 border border-gold/25 text-gold text-xs font-medium hover:bg-gold/20 transition-colors flex-shrink-0 disabled:opacity-50"
+            >
+              {searchAllLoading ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
+              Load All Matching
+            </button>
+          )}
         </div>
       </div>
 
@@ -549,26 +645,21 @@ export default function ChildrenPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                {[
-                  { key: 'firstName', label: 'Name' },
-                  { key: 'parentName', label: 'Parent' },
-                  { key: 'age', label: 'Age' },
-                  { key: 'gender', label: 'Gender' },
-                  { key: 'village', label: 'Village' },
-                  { key: 'employeeName', label: 'Added By' },
-                  { key: 'createdAt', label: 'Date' },
-                ].map((col) => (
-                  <th
-                    key={col.key}
-                    className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider cursor-pointer hover:text-gold transition-colors select-none"
-                    onClick={() => handleSort(col.key as keyof Child)}
-                  >
-                    <div className="flex items-center gap-1">
-                      {col.label}
-                      <SortIcon col={col.key as keyof Child} />
-                    </div>
-                  </th>
-                ))}
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Name</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Parent</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Age</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Gender</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Village</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Added By</th>
+                <th
+                  className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider cursor-pointer hover:text-gold transition-colors select-none"
+                  onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                >
+                  <div className="flex items-center gap-1">
+                    Date
+                    <SortIcon />
+                  </div>
+                </th>
                 <th className="px-4 py-3 text-right text-gray-500 font-semibold text-xs uppercase tracking-wider">
                   Actions
                 </th>
@@ -587,10 +678,12 @@ export default function ChildrenPage() {
                   <td colSpan={8} className="text-center py-16">
                     <p className="text-red-500 font-medium text-sm">Failed to load data</p>
                     <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">{fetchError}</p>
-                    <p className="text-gray-400 text-xs mt-2">Check Firestore security rules — the admin account may not have read permission on the <code className="bg-gray-100 px-1 rounded">children</code> collection.</p>
+                    <p className="text-gray-400 text-xs mt-2">
+                      If this mentions a missing index, click the link in the error to create it, or check Firestore security rules.
+                    </p>
                   </td>
                 </tr>
-              ) : paginated.length === 0 ? (
+              ) : rowsFiltered.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center py-16">
                     <p className="text-gray-400 text-base">No records found</p>
@@ -602,7 +695,7 @@ export default function ChildrenPage() {
                   </td>
                 </tr>
               ) : (
-                paginated.map((child) => (
+                rowsFiltered.map((child) => (
                   <tr key={child.id} className="table-row">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
@@ -637,7 +730,7 @@ export default function ChildrenPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
-                        onClick={() => handleSoftDelete(child.id, `${child.firstName} ${child.lastName}`)}
+                        onClick={() => handleSoftDelete(child)}
                         disabled={deletingId === child.id}
                         className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-40"
                         title="Move to recycle bin"
@@ -656,33 +749,20 @@ export default function ChildrenPage() {
           </table>
         </div>
 
-        {totalPages > 1 && (
+        {!searchAllResults && !loading && !fetchError && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
-            <p className="text-gray-400 text-xs">
-              Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
-            </p>
+            <p className="text-gray-400 text-xs">Page {pageIndex + 1}</p>
             <div className="flex gap-2">
               <button
-                disabled={page === 0}
-                onClick={() => setPage(page - 1)}
+                disabled={pageIndex === 0}
+                onClick={() => fetchPage(pageIndex - 1)}
                 className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-sm disabled:opacity-30 hover:bg-gray-200 transition-colors"
               >
                 ← Prev
               </button>
-              {Array.from({ length: Math.min(totalPages, 7) }).map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setPage(i)}
-                  className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                    page === i ? 'bg-gold text-black font-semibold' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {i + 1}
-                </button>
-              ))}
               <button
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage(page + 1)}
+                disabled={!hasMore}
+                onClick={() => fetchPage(pageIndex + 1)}
                 className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-sm disabled:opacity-30 hover:bg-gray-200 transition-colors"
               >
                 Next →
