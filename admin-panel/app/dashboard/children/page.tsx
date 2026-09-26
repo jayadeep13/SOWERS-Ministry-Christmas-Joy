@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { db, auth } from '../../../lib/firebase';
-import { applyStatsDelta } from '../../../lib/stats';
+import { applyStatsDelta, applyEmployeeEntryDelta } from '../../../lib/stats';
 import {
   collection, onSnapshot, query, orderBy, where, limit, startAfter,
   getDocs, addDoc, updateDoc, doc, serverTimestamp, QueryDocumentSnapshot, DocumentData,
@@ -11,7 +11,6 @@ import {
   Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2,
   CheckCircle, Trash2, RefreshCw, Layers,
 } from 'lucide-react';
-import Papa from 'papaparse';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 
 interface Child {
@@ -227,6 +226,7 @@ export default function ChildrenPage() {
     try {
       await updateDoc(doc(db, 'children', child.id), { deleted: true, deletedAt: serverTimestamp() });
       await applyStatsDelta(db, child.gender, child.age, child.village, -1);
+      await applyEmployeeEntryDelta(db, child.employeeId, -1);
       setChildren((prev) => prev.filter((c) => c.id !== child.id));
       if (pagesCacheRef.current[pageIndex]) {
         pagesCacheRef.current[pageIndex] = pagesCacheRef.current[pageIndex].filter((c) => c.id !== child.id);
@@ -284,25 +284,131 @@ export default function ChildrenPage() {
 
   const hasActiveFilters = !!(search || genderFilter || villageFilter || employeeFilter || ageMin || ageMax || dateFilter !== 'all');
 
-  const exportCSV = () => {
-    const data = rowsFiltered.map((c) => ({
-      'First Name': c.firstName,
-      'Last Name': c.lastName,
-      'Parent Name': c.parentName,
-      Age: c.age,
-      Gender: c.gender,
-      Village: c.village,
-      'Added By': c.employeeName,
-      'Employee Phone': c.employeePhone,
-      Date: c.createdAt?.toDate ? format(c.createdAt.toDate(), 'dd MMM yyyy') : '',
-    }));
-    const csv = Papa.unparse(data);
-    const blob = new Blob([csv], { type: 'text/csv' });
+  // Human-readable list of the filters currently applied, for the export header
+  const describeFilters = (): [string, string][] => {
+    const out: [string, string][] = [];
+    if (dateFilter === 'custom' && customFrom && customTo) {
+      out.push(['Date', `${format(parseISO(customFrom), 'dd MMM yyyy')} – ${format(parseISO(customTo), 'dd MMM yyyy')}`]);
+    } else if (dateFilter !== 'all') {
+      out.push(['Date', DATE_CHIPS.find((d) => d.key === dateFilter)?.label || dateFilter]);
+    }
+    if (employeeFilter) out.push(['Employee', employeeOptions.find((e) => e.id === employeeFilter)?.name || employeeFilter]);
+    if (villageFilter) out.push(['Village', villageFilter]);
+    if (genderFilter) out.push(['Gender', genderFilter]);
+    if (ageMin && ageMax) out.push(['Age', `${ageMin} – ${ageMax} years`]);
+    else if (ageMin) out.push(['Age', `${ageMin} years and above`]);
+    else if (ageMax) out.push(['Age', `Up to ${ageMax} years`]);
+    if (search) out.push(['Search', `"${search}"`]);
+    return out;
+  };
+
+  const exportExcel = async () => {
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Children Data', { views: [{ showGridLines: false }] });
+
+    const columns = [
+      { header: 'S.No', width: 7 },
+      { header: 'First Name', width: 18 },
+      { header: 'Last Name', width: 18 },
+      { header: 'Parent Name', width: 22 },
+      { header: 'Age', width: 7 },
+      { header: 'Gender', width: 10 },
+      { header: 'Village', width: 22 },
+      { header: 'Added By', width: 22 },
+      { header: 'Employee Phone', width: 18 },
+      { header: 'Date', width: 14 },
+    ];
+    ws.columns = columns.map((c) => ({ width: c.width }));
+    const lastCol = String.fromCharCode(64 + columns.length);
+    const navy = 'FF0B1C3D';
+    const gold = 'FFD4AF37';
+
+    // Title block
+    ws.mergeCells(`A1:${lastCol}1`);
+    const title = ws.getCell('A1');
+    title.value = 'SOWERS MINISTRY';
+    title.font = { name: 'Georgia', size: 18, bold: true, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } };
+    title.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(1).height = 32;
+
+    ws.mergeCells(`A2:${lastCol}2`);
+    const subtitle = ws.getCell('A2');
+    subtitle.value = `Christmas Joy Programme ${new Date().getFullYear()} — Children Data Report`;
+    subtitle.font = { size: 12, bold: true, color: { argb: gold } };
+    subtitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } };
+    subtitle.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(2).height = 22;
+
+    // Report details: generated time, filters, total
+    const filters = describeFilters();
+    const details: [string, string][] = [
+      ['Generated On', format(new Date(), 'dd MMM yyyy, hh:mm a')],
+      ...(filters.length ? filters : [['Filters', 'None — all records'] as [string, string]]),
+      ['Total Records', String(rowsFiltered.length)],
+    ];
+    let r = 4;
+    details.forEach(([label, value]) => {
+      ws.getCell(`A${r}`).value = label;
+      ws.mergeCells(`A${r}:B${r}`);
+      ws.getCell(`A${r}`).font = { bold: true, color: { argb: 'FF555555' } };
+      ws.mergeCells(`C${r}:${lastCol}${r}`);
+      ws.getCell(`C${r}`).value = value;
+      ws.getCell(`C${r}`).font = { bold: label !== 'Generated On', color: { argb: navy } };
+      r++;
+    });
+
+    // Table header
+    const headerRowNum = r + 1;
+    const headerRow = ws.getRow(headerRowNum);
+    headerRow.values = columns.map((c) => c.header);
+    headerRow.height = 20;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FF000000' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: gold } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+    });
+
+    // Data rows
+    rowsFiltered.forEach((c, i) => {
+      const row = ws.addRow([
+        i + 1,
+        c.firstName,
+        c.lastName,
+        c.parentName,
+        c.age,
+        c.gender,
+        c.village,
+        c.employeeName,
+        c.employeePhone,
+        c.createdAt?.toDate ? format(c.createdAt.toDate(), 'dd MMM yyyy') : '',
+      ]);
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFDDDDDD' } },
+          bottom: { style: 'thin', color: { argb: 'FFDDDDDD' } },
+          left: { style: 'thin', color: { argb: 'FFDDDDDD' } },
+          right: { style: 'thin', color: { argb: 'FFDDDDDD' } },
+        };
+        if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F7F2' } };
+        if (col === 1 || col === 5) cell.alignment = { horizontal: 'center' };
+      });
+    });
+
+    // Keep the header visible while scrolling, and allow Excel filtering on it
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum, showGridLines: false }];
+    ws.autoFilter = { from: { row: headerRowNum, column: 1 }, to: { row: headerRowNum, column: columns.length } };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `sowers-children-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.download = `sowers-children-${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   const SortIcon = () =>
@@ -340,9 +446,9 @@ export default function ChildrenPage() {
           >
             <RefreshCw size={16} />
           </button>
-          <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200">
+          <button onClick={exportExcel} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200">
             <Download size={16} />
-            Export CSV
+            Export Excel
           </button>
           <button onClick={openAddModal} className="gold-btn px-4 py-2.5 flex items-center gap-2 text-sm">
             <Plus size={16} />

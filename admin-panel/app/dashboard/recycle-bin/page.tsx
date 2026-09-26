@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { db } from '../../../lib/firebase';
-import { applyStatsDelta } from '../../../lib/stats';
+import { applyStatsDelta, applyEmployeeEntryDelta } from '../../../lib/stats';
 import {
   collection, query, where, orderBy, limit, startAfter, getDocs,
   doc, writeBatch, QueryDocumentSnapshot, DocumentData,
@@ -17,6 +17,7 @@ interface DeletedChild {
   village: string;
   gender: string;
   age: number;
+  employeeId?: string;
   employeeName: string;
   deletedAt: any;
 }
@@ -95,6 +96,7 @@ export default function RecycleBinPage() {
       }
       for (const c of records) {
         await applyStatsDelta(db, c.gender, c.age, c.village, 1);
+        await applyEmployeeEntryDelta(db, c.employeeId, 1);
       }
       resetAndLoad();
     } catch (err: any) {

@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import {
   UserPlus, Phone, Trash2, Loader2, X, CheckCircle, ChevronDown, ChevronUp, MapPin, Baby,
-  KeyRound, ShieldAlert,
+  KeyRound, ShieldAlert, Search,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -49,6 +49,7 @@ export default function EmployeesPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('totalEntries', 'desc'));
@@ -170,6 +171,27 @@ export default function EmployeesPage() {
   };
 
   const totalEntries = employees.reduce((s, e) => s + (e.totalEntries || 0), 0);
+  const maxEntries = employees[0]?.totalEntries || 1;
+
+  // Leaderboard rank by entries (employees arrive ordered by totalEntries desc)
+  const rankById = useMemo(() => {
+    const map: Record<string, number> = {};
+    employees.forEach((e, i) => { map[e.id] = i; });
+    return map;
+  }, [employees]);
+
+  // Displayed list: A–Z by name, filtered by name or phone
+  const visibleEmployees = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const digits = term.replace(/\D/g, '');
+    return employees
+      .filter((e) =>
+        !term ||
+        (e.name || '').toLowerCase().includes(term) ||
+        (digits && (e.phone || '').replace(/\D/g, '').includes(digits))
+      )
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+  }, [employees, search]);
 
   return (
     <div className="space-y-6">
@@ -212,7 +234,16 @@ export default function EmployeesPage() {
       <div className="glass-card overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100">
           <h2 className="font-serif text-xl text-gray-900">Employee Leaderboard</h2>
-          <p className="text-gray-400 text-xs mt-0.5">Click any row to see the children they registered</p>
+          <p className="text-gray-400 text-xs mt-0.5">Sorted A–Z · badge shows rank by entries · click any row to see the children they registered</p>
+          <div className="relative mt-3">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              className="input-field w-full pl-9"
+              placeholder="Search by name or phone number..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </div>
 
         {loading ? (
@@ -221,10 +252,12 @@ export default function EmployeesPage() {
           </div>
         ) : employees.length === 0 ? (
           <div className="text-center py-12 text-gray-400">No employees yet</div>
+        ) : visibleEmployees.length === 0 ? (
+          <div className="text-center py-12 text-gray-400">No employees match "{search}"</div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {employees.map((emp, i) => {
-              const maxEntries = employees[0]?.totalEntries || 1;
+            {visibleEmployees.map((emp) => {
+              const i = rankById[emp.id];
               const pct = Math.round(((emp.totalEntries || 0) / maxEntries) * 100);
               const empChildren = getEmployeeChildren(emp);
               const isExpanded = expanded === emp.id;
@@ -301,7 +334,7 @@ export default function EmployeesPage() {
                     <button
                       onClick={(e) => { e.stopPropagation(); handleResetPin(emp.id, emp.name); }}
                       disabled={resettingId === emp.id}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-gold/10 text-gray-300 hover:text-gold transition-all disabled:opacity-100"
+                      className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-400 hover:bg-gold/10 hover:border-gold/30 hover:text-gold transition-all"
                       title="Reset PIN"
                     >
                       {resettingId === emp.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
@@ -310,7 +343,7 @@ export default function EmployeesPage() {
                     {/* Delete */}
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(emp.id, emp.name); }}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 transition-all"
+                      className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-400 hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition-all"
                       title="Remove employee"
                     >
                       <Trash2 size={15} />

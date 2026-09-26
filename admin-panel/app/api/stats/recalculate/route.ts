@@ -42,12 +42,14 @@ export async function POST(req: Request) {
     let otherCount = 0;
     const ageGroups: Record<string, number> = {};
     const villageCounts: Record<string, number> = {};
+    const entriesByEmployee: Record<string, number> = {};
 
     snap.forEach((docSnap) => {
       const data = docSnap.data();
       if (data.deleted) return;
 
       totalChildren += 1;
+      if (data.employeeId) entriesByEmployee[data.employeeId] = (entriesByEmployee[data.employeeId] || 0) + 1;
       if (data.gender === 'Male') maleCount += 1;
       else if (data.gender === 'Female') femaleCount += 1;
       else otherCount += 1;
@@ -62,6 +64,16 @@ export async function POST(req: Request) {
     await db.collection('stats').doc('summary').set({
       totalChildren, maleCount, femaleCount, otherCount, ageGroups, villageCounts,
     });
+
+    // Rebuild each employee's totalEntries from their active (non-deleted) children
+    const usersSnap = await db.collection('users').get();
+    for (let i = 0; i < usersSnap.docs.length; i += 450) {
+      const batch = db.batch();
+      usersSnap.docs.slice(i, i + 450).forEach((u) => {
+        batch.update(u.ref, { totalEntries: entriesByEmployee[u.id] || 0 });
+      });
+      await batch.commit();
+    }
 
     return NextResponse.json({ totalChildren, maleCount, femaleCount, otherCount });
   } catch (err: any) {

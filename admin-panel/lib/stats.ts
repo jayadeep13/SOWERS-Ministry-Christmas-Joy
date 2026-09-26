@@ -3,7 +3,7 @@
 // so the Dashboard never has to scan the whole `children` collection to show
 // age/gender/village breakdowns. Bucket labels here MUST match the Dashboard's
 // AGE_GROUPS exactly.
-import { doc, increment, setDoc } from 'firebase/firestore';
+import { doc, increment, setDoc, updateDoc } from 'firebase/firestore';
 
 const AGE_BUCKETS = [
   { label: '0-2', min: 0, max: 2 },
@@ -40,4 +40,14 @@ export async function applyStatsDelta(
   delta: 1 | -1
 ) {
   await setDoc(doc(db, 'stats', 'summary'), statsDelta(gender, age, village, delta), { merge: true });
+}
+
+// Keeps an employee's users/{uid}.totalEntries in step with soft-delete/restore.
+// Children added from the admin panel carry the admin's uid, which has no users
+// doc — updateDoc fails there and we skip it rather than create a stray employee.
+export async function applyEmployeeEntryDelta(db: any, employeeId: string | undefined, delta: 1 | -1) {
+  if (!employeeId) return;
+  try {
+    await updateDoc(doc(db, 'users', employeeId), { totalEntries: increment(delta) });
+  } catch {}
 }

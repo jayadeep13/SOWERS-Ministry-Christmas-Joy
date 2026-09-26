@@ -73,11 +73,12 @@ export default function DashboardPage() {
     .map(([village, count]) => ({ village, count: count as number }));
 
   const employeeData = employees
+    .filter((e) => (e.totalEntries || 0) > 0)
     .slice(0, 5)
     .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: e.totalEntries || 0 }));
 
   const handleRecalculate = async () => {
-    if (!confirm('Recalculate dashboard stats from every record in Children Data? This does one full scan and rebuilds the counters.')) return;
+    if (!confirm('Recalculate dashboard stats and employee entry counts from every record in Children Data? This does one full scan and rebuilds the counters.')) return;
     setRecalculating(true);
     try {
       const idToken = await auth.currentUser?.getIdToken();
@@ -258,7 +259,7 @@ export default function DashboardPage() {
               </div>
             ))}
             {employeeData.length === 0 && (
-              <p className="text-gray-400 text-sm text-center py-6">No data yet</p>
+              <p className="text-gray-400 text-sm text-center py-6">No entries yet — employees will appear here once they register children</p>
             )}
           </div>
         </div>
