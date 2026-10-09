@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { db, auth, firebaseConfig } from '../../../lib/firebase';
 import { phoneToEmployeeEmail } from '../../../lib/employeeAuth';
+import { genderLabel } from '../../../lib/gender';
 import { initializeApp, getApps, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import {
@@ -406,7 +407,7 @@ export default function EmployeesPage() {
                                         ? 'bg-pink-50 text-pink-600'
                                         : 'bg-gray-100 text-gray-500'
                                     }`}>
-                                      {child.gender} · {child.age}y
+                                      {genderLabel(child.gender)} · {child.age}y
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-1 mt-1">

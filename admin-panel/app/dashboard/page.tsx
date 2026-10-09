@@ -63,8 +63,8 @@ export default function DashboardPage() {
   }));
 
   const genderData = [
-    { name: 'Male', value: males },
-    { name: 'Female', value: females },
+    { name: 'Boy', value: males },
+    { name: 'Girl', value: females },
   ];
 
   const villageData = Object.entries(villageCounts)
@@ -136,13 +136,13 @@ export default function DashboardPage() {
         />
         <StatCard
           icon={<Baby className="w-6 h-6 text-blue-500" />}
-          label="Male"
+          label="Boys"
           value={males}
           sub={`${totalChildren ? Math.round((males / totalChildren) * 100) : 0}% of total`}
         />
         <StatCard
           icon={<Baby className="w-6 h-6 text-pink-500" />}
-          label="Female"
+          label="Girls"
           value={females}
           sub={`${totalChildren ? Math.round((females / totalChildren) * 100) : 0}% of total`}
         />
@@ -199,11 +199,11 @@ export default function DashboardPage() {
           <div className="flex justify-center gap-8 mt-2">
             <div className="text-center">
               <p className="font-serif text-2xl text-blue-500 font-bold">{males}</p>
-              <p className="text-gray-400 text-xs">Male</p>
+              <p className="text-gray-400 text-xs">Boys</p>
             </div>
             <div className="text-center">
               <p className="font-serif text-2xl text-pink-500 font-bold">{females}</p>
-              <p className="text-gray-400 text-xs">Female</p>
+              <p className="text-gray-400 text-xs">Girls</p>
             </div>
           </div>
         </div>

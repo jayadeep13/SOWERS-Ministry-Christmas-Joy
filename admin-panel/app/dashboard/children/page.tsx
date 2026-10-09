@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { db, auth } from '../../../lib/firebase';
 import { applyStatsDelta, applyEmployeeEntryDelta } from '../../../lib/stats';
+import { genderLabel } from '../../../lib/gender';
 import {
   collection, onSnapshot, query, orderBy, where, limit, startAfter,
   getDocs, addDoc, updateDoc, doc, serverTimestamp, QueryDocumentSnapshot, DocumentData,
@@ -294,7 +295,7 @@ export default function ChildrenPage() {
     }
     if (employeeFilter) out.push(['Employee', employeeOptions.find((e) => e.id === employeeFilter)?.name || employeeFilter]);
     if (villageFilter) out.push(['Village', villageFilter]);
-    if (genderFilter) out.push(['Gender', genderFilter]);
+    if (genderFilter) out.push(['Gender', genderLabel(genderFilter)]);
     if (ageMin && ageMax) out.push(['Age', `${ageMin} – ${ageMax} years`]);
     else if (ageMin) out.push(['Age', `${ageMin} years and above`]);
     else if (ageMax) out.push(['Age', `Up to ${ageMax} years`]);
@@ -379,7 +380,7 @@ export default function ChildrenPage() {
         c.lastName,
         c.parentName,
         c.age,
-        c.gender,
+        genderLabel(c.gender),
         c.village,
         c.employeeName,
         c.employeePhone,
@@ -551,7 +552,7 @@ export default function ChildrenPage() {
                           : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-[#1a3070]/40'
                       }`}
                     >
-                      {g}
+                      {genderLabel(g)}
                     </button>
                   ))}
                 </div>
@@ -682,8 +683,8 @@ export default function ChildrenPage() {
             onChange={(e) => setGenderFilter(e.target.value)}
           >
             <option value="">All Genders</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
+            <option value="Male">Boy</option>
+            <option value="Female">Girl</option>
             <option value="Other">Other</option>
           </select>
 
@@ -821,7 +822,7 @@ export default function ChildrenPage() {
                           ? 'bg-pink-50 text-pink-600 border border-pink-200'
                           : 'bg-gray-100 text-gray-500 border border-gray-200'
                       }`}>
-                        {child.gender}
+                        {genderLabel(child.gender)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{child.village}</td>
