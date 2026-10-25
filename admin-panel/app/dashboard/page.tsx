@@ -69,12 +69,9 @@ export default function DashboardPage() {
 
   const villageData = Object.entries(villageCounts)
     .sort(([, a], [, b]) => (b as number) - (a as number))
-    .slice(0, 7)
     .map(([village, count]) => ({ village, count: count as number }));
 
   const employeeData = employees
-    .filter((e) => (e.totalEntries || 0) > 0)
-    .slice(0, 5)
     .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: e.totalEntries || 0 }));
 
   const handleRecalculate = async () => {
@@ -209,12 +206,15 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Village Chart + Top Employees */}
+      {/* Village Chart + Employees (all, highest first) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Village breakdown */}
         <div className="glass-card p-6 col-span-2">
-          <h2 className="font-serif text-xl text-gray-900 mb-4">Top Villages</h2>
-          <ResponsiveContainer width="100%" height={220}>
+          <h2 className="font-serif text-xl text-gray-900 mb-4">
+            All Villages <span className="text-gray-400 text-sm font-sans">({villageData.length})</span>
+          </h2>
+          <div className="max-h-[480px] overflow-y-auto pr-1">
+          <ResponsiveContainer width="100%" height={Math.max(220, villageData.length * 36)}>
             <BarChart data={villageData} layout="vertical" barSize={18}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" horizontal={false} />
               <XAxis type="number" stroke="#9CA3AF" tick={{ fontSize: 11, fill: '#6B7280' }} />
@@ -227,15 +227,16 @@ export default function DashboardPage() {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          </div>
         </div>
 
-        {/* Top Employees */}
+        {/* All Employees */}
         <div className="glass-card p-6">
           <h2 className="font-serif text-xl text-gray-900 mb-4 flex items-center gap-2">
             <UserCheck size={18} className="text-gold" />
-            Top Employees
+            All Employees <span className="text-gray-400 text-sm font-sans">({employeeData.length})</span>
           </h2>
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
             {employeeData.map((emp, i) => (
               <div key={emp.id} className="flex items-center gap-3">
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
@@ -259,7 +260,7 @@ export default function DashboardPage() {
               </div>
             ))}
             {employeeData.length === 0 && (
-              <p className="text-gray-400 text-sm text-center py-6">No entries yet — employees will appear here once they register children</p>
+              <p className="text-gray-400 text-sm text-center py-6">No employees yet</p>
             )}
           </div>
         </div>
