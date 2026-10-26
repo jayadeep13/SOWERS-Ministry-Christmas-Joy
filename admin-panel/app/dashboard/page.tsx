@@ -2,20 +2,20 @@
 // app/dashboard/page.tsx
 import { useEffect, useState } from 'react';
 import { db, auth } from '../../lib/firebase';
-import { doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { onSnapshot, collection, query } from 'firebase/firestore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { Users, Baby, Building2, UserCheck, RefreshCw, Loader2 } from 'lucide-react';
 
-interface StatsSummary {
-  totalChildren?: number;
-  maleCount?: number;
-  femaleCount?: number;
-  otherCount?: number;
-  ageGroups?: Record<string, number>;
-  villageCounts?: Record<string, number>;
+interface ChildRow {
+  id: string;
+  age?: number | string;
+  gender?: string;
+  village?: string;
+  employeeId?: string;
+  deleted?: boolean;
 }
 
 interface Employee {
@@ -25,41 +25,55 @@ interface Employee {
 }
 
 const AGE_GROUPS = [
-  { key: '0-2', label: '0–2' },
-  { key: '3-5', label: '3–5' },
-  { key: '6-8', label: '6–8' },
-  { key: '9-11', label: '9–11' },
-  { key: '12-14', label: '12–14' },
+  { key: '0-2', label: '0–2', min: 0, max: 2 },
+  { key: '3-5', label: '3–5', min: 3, max: 5 },
+  { key: '6-8', label: '6–8', min: 6, max: 8 },
+  { key: '9-11', label: '9–11', min: 9, max: 11 },
+  { key: '12-14', label: '12–14', min: 12, max: 14 },
 ];
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<StatsSummary | null>(null);
+  const [children, setChildren] = useState<ChildRow[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [recalculating, setRecalculating] = useState(false);
 
+  // Count straight from Children Data (live) rather than the stats/summary
+  // counters — those drift whenever an app build doesn't update them. Read-only.
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'stats', 'summary'), (snap) => {
-      setStats(snap.exists() ? (snap.data() as StatsSummary) : {});
+    const unsub = onSnapshot(collection(db, 'children'), (snap) => {
+      setChildren(snap.docs.map((d) => ({ id: d.id, ...d.data() } as ChildRow)));
     });
     return () => unsub();
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), orderBy('totalEntries', 'desc'));
+    const q = query(collection(db, 'users'));
     const unsub = onSnapshot(q, (snap) => {
       setEmployees(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Employee)));
     });
     return () => unsub();
   }, []);
 
-  const totalChildren = stats?.totalChildren ?? 0;
-  const males = stats?.maleCount ?? 0;
-  const females = stats?.femaleCount ?? 0;
-  const villageCounts = stats?.villageCounts ?? {};
+  const active = children.filter((c) => !c.deleted);
+  const totalChildren = active.length;
+  const males = active.filter((c) => c.gender === 'Male').length;
+  const females = active.filter((c) => c.gender === 'Female').length;
+
+  const villageCounts: Record<string, number> = {};
+  const entriesByEmployee: Record<string, number> = {};
+  active.forEach((c) => {
+    const village = (c.village || '').trim() || 'Unknown';
+    villageCounts[village] = (villageCounts[village] || 0) + 1;
+    if (c.employeeId) entriesByEmployee[c.employeeId] = (entriesByEmployee[c.employeeId] || 0) + 1;
+  });
 
   const ageData = AGE_GROUPS.map((g) => ({
     label: g.label,
-    count: stats?.ageGroups?.[g.key] ?? 0,
+    count: active.filter((c) => {
+      const age = Number(c.age) || 0;
+      // anything above the last bucket counts in it, same as the stats code
+      return g.key === '12-14' ? age >= g.min : age >= g.min && age <= g.max;
+    }).length,
   }));
 
   const genderData = [
@@ -72,7 +86,8 @@ export default function DashboardPage() {
     .map(([village, count]) => ({ village, count: count as number }));
 
   const employeeData = employees
-    .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: e.totalEntries || 0 }));
+    .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: entriesByEmployee[e.id] || 0 }))
+    .sort((a, b) => b.count - a.count);
 
   const handleRecalculate = async () => {
     if (!confirm('Recalculate dashboard stats and employee entry counts from every record in Children Data? This does one full scan and rebuilds the counters.')) return;
