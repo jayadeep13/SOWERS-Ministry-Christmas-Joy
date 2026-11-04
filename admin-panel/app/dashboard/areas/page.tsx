@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { db } from '../../../lib/firebase';
 import {
-  collection, onSnapshot, query, orderBy, addDoc, deleteDoc, doc, serverTimestamp,
+  collection, onSnapshot, query, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp,
 } from 'firebase/firestore';
-import { MapPin, Plus, Trash2, Loader2, X, CheckCircle } from 'lucide-react';
+import { MapPin, Plus, Pencil, Trash2, Loader2, X, CheckCircle } from 'lucide-react';
 
 interface Area {
   id: string;
@@ -22,6 +22,8 @@ export default function AreasPage() {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [name, setName] = useState('');
+  // When set, the modal edits this area's name instead of adding a new one.
+  const [editing, setEditing] = useState<Area | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'areas'), orderBy('name', 'asc'));
@@ -38,12 +40,18 @@ export default function AreasPage() {
     setError('');
     setAddLoading(true);
     try {
-      await addDoc(collection(db, 'areas'), { name: name.trim(), createdAt: serverTimestamp() });
-      setSuccess(`Area "${name.trim()}" added!`);
+      if (editing) {
+        // Only the area's name changes — existing children records keep the village they were saved with.
+        await updateDoc(doc(db, 'areas', editing.id), { name: name.trim() });
+        setSuccess(`Area renamed to "${name.trim()}"`);
+      } else {
+        await addDoc(collection(db, 'areas'), { name: name.trim(), createdAt: serverTimestamp() });
+        setSuccess(`Area "${name.trim()}" added!`);
+      }
       setName('');
       setTimeout(() => { setSuccess(''); setShowAdd(false); }, 2000);
     } catch (err: any) {
-      setError(err.message || 'Failed to add area');
+      setError(err.message || (editing ? 'Failed to update area' : 'Failed to add area'));
     }
     setAddLoading(false);
   };
@@ -67,7 +75,7 @@ export default function AreasPage() {
           </p>
         </div>
         <button
-          onClick={() => { setShowAdd(true); setError(''); setName(''); }}
+          onClick={() => { setEditing(null); setShowAdd(true); setError(''); setSuccess(''); setName(''); }}
           className="gold-btn px-4 py-2.5 flex items-center gap-2 text-sm"
         >
           <Plus size={16} />
@@ -88,7 +96,7 @@ export default function AreasPage() {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-5">
-              <h2 className="text-lg font-serif font-bold text-gray-900">Add New Area</h2>
+              <h2 className="text-lg font-serif font-bold text-gray-900">{editing ? 'Edit Area' : 'Add New Area'}</h2>
               <button
                 onClick={() => setShowAdd(false)}
                 className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500 hover:text-gray-800 hover:bg-gray-200 transition-colors"
@@ -136,8 +144,8 @@ export default function AreasPage() {
                   disabled={addLoading}
                   className="gold-btn flex-1 py-2.5 flex items-center justify-center gap-2 text-sm"
                 >
-                  {addLoading ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                  Add Area
+                  {addLoading ? <Loader2 size={16} className="animate-spin" /> : editing ? <Pencil size={16} /> : <Plus size={16} />}
+                  {editing ? 'Save Changes' : 'Add Area'}
                 </button>
               </div>
             </form>
@@ -169,10 +177,18 @@ export default function AreasPage() {
                 </div>
                 <span className="text-gray-800 font-medium text-sm">{area.name}</span>
               </div>
+              <div className="flex items-center ml-2 flex-shrink-0 gap-2">
+              <button
+                onClick={() => { setEditing(area); setName(area.name); setError(''); setSuccess(''); setShowAdd(true); }}
+                className="text-gray-300 hover:text-gold transition-colors"
+                title="Edit area"
+              >
+                <Pencil size={15} />
+              </button>
               <button
                 onClick={() => handleDelete(area.id)}
                 disabled={deleteId === area.id}
-                className="text-gray-300 hover:text-red-500 transition-colors ml-2 flex-shrink-0 disabled:opacity-40"
+                className="text-gray-300 hover:text-red-500 transition-colors disabled:opacity-40"
                 title="Delete area"
               >
                 {deleteId === area.id ? (
@@ -181,6 +197,7 @@ export default function AreasPage() {
                   <Trash2 size={15} />
                 )}
               </button>
+              </div>
             </div>
           ))}
         </div>

@@ -5,7 +5,7 @@ import { db, auth } from '../../lib/firebase';
 import { onSnapshot, collection, query } from 'firebase/firestore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  Cell,
 } from 'recharts';
 import { Users, Baby, Building2, UserCheck, RefreshCw, Loader2 } from 'lucide-react';
 
@@ -24,13 +24,8 @@ interface Employee {
   totalEntries: number;
 }
 
-const AGE_GROUPS = [
-  { key: '0-2', label: '0–2', min: 0, max: 2 },
-  { key: '3-5', label: '3–5', min: 3, max: 5 },
-  { key: '6-8', label: '6–8', min: 6, max: 8 },
-  { key: '9-11', label: '9–11', min: 9, max: 11 },
-  { key: '12-14', label: '12–14', min: 12, max: 14 },
-];
+// Ages 1–14, one bar per year (the apps only accept ages in this range)
+const AGES = Array.from({ length: 14 }, (_, i) => i + 1);
 
 export default function DashboardPage() {
   const [children, setChildren] = useState<ChildRow[]>([]);
@@ -67,19 +62,13 @@ export default function DashboardPage() {
     if (c.employeeId) entriesByEmployee[c.employeeId] = (entriesByEmployee[c.employeeId] || 0) + 1;
   });
 
-  const ageData = AGE_GROUPS.map((g) => ({
-    label: g.label,
-    count: active.filter((c) => {
-      const age = Number(c.age) || 0;
-      // anything above the last bucket counts in it, same as the stats code
-      return g.key === '12-14' ? age >= g.min : age >= g.min && age <= g.max;
-    }).length,
-  }));
-
-  const genderData = [
-    { name: 'Boy', value: males },
-    { name: 'Girl', value: females },
-  ];
+  const ageBreakdown = (gender: string) =>
+    AGES.map((age) => ({
+      label: String(age),
+      count: active.filter((c) => c.gender === gender && Number(c.age) === age).length,
+    }));
+  const boysByAge = ageBreakdown('Male');
+  const girlsByAge = ageBreakdown('Female');
 
   const villageData = Object.entries(villageCounts)
     .sort(([, a], [, b]) => (b as number) - (a as number))
@@ -166,59 +155,44 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Charts Row */}
+      {/* Age-wise breakdown: Boys | Girls */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Age Distribution */}
-        <div className="glass-card p-6">
-          <h2 className="font-serif text-xl text-gray-900 mb-4">Age Distribution</h2>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={ageData} barSize={36}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-              <XAxis dataKey="label" stroke="#9CA3AF" tick={{ fontSize: 12, fill: '#6B7280' }} />
-              <YAxis stroke="#9CA3AF" tick={{ fontSize: 12, fill: '#6B7280' }} />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.04)' }} />
-              <Bar dataKey="count" fill="#D4AF37" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Gender Split */}
-        <div className="glass-card p-6">
-          <h2 className="font-serif text-xl text-gray-900 mb-4">Gender Split</h2>
-          <div className="flex items-center justify-center">
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie
-                  data={genderData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={90}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {genderData.map((entry, index) => (
-                    <Cell key={entry.name} fill={index === 0 ? '#60A5FA' : '#F9A8D4'} />
-                  ))}
-                </Pie>
-                <Legend
-                  formatter={(value) => <span className="text-gray-600 text-sm">{value}</span>}
+        {[
+          { title: 'Boys by Age', total: males, data: boysByAge, color: '#3B82F6', noun: 'boys' },
+          { title: 'Girls by Age', total: females, data: girlsByAge, color: '#EC4899', noun: 'girls' },
+        ].map((chart) => (
+          <div key={chart.title} className="glass-card p-6">
+            <h2 className="font-serif text-xl text-gray-900 mb-4">
+              {chart.title} <span className="text-gray-400 text-sm font-sans">({chart.total})</span>
+            </h2>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={chart.data} barSize={18}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  interval={0}
+                  stroke="#9CA3AF"
+                  tick={{ fontSize: 11, fill: '#6B7280' }}
+                  label={{ value: 'Age (years)', position: 'insideBottom', offset: -4, fontSize: 11, fill: '#9CA3AF' }}
+                  height={36}
                 />
-                <Tooltip content={<CustomTooltip />} />
-              </PieChart>
+                <YAxis allowDecimals={false} stroke="#9CA3AF" tick={{ fontSize: 12, fill: '#6B7280' }} />
+                <Tooltip
+                  cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                  content={({ active, payload, label }: any) =>
+                    active && payload?.length ? (
+                      <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm shadow-md">
+                        <p className="text-gold font-semibold">Age {label}</p>
+                        <p className="text-gray-600">{payload[0].value} {chart.noun}</p>
+                      </div>
+                    ) : null
+                  }
+                />
+                <Bar dataKey="count" fill={chart.color} radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex justify-center gap-8 mt-2">
-            <div className="text-center">
-              <p className="font-serif text-2xl text-blue-500 font-bold">{males}</p>
-              <p className="text-gray-400 text-xs">Boys</p>
-            </div>
-            <div className="text-center">
-              <p className="font-serif text-2xl text-pink-500 font-bold">{females}</p>
-              <p className="text-gray-400 text-xs">Girls</p>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
 
       {/* Village Chart + Employees (all, highest first) */}
