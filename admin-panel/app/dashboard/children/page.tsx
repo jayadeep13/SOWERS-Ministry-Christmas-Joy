@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import {
   Search, Download, ChevronUp, ChevronDown, X, Calendar, Filter, Plus, Loader2,
-  CheckCircle, Trash2, RefreshCw, Layers,
+  CheckCircle, Trash2, RefreshCw, Layers, Gift,
 } from 'lucide-react';
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 
@@ -27,6 +27,10 @@ interface Child {
   employeePhone: string;
   createdAt: any;
   deleted?: boolean;
+  // Gift delivery — set only from the admin panel
+  giftReceived?: boolean;
+  giftReceivedAt?: any;
+  giftReceivedBy?: string;
 }
 
 interface EmployeeOption { id: string; name: string; }
@@ -79,6 +83,7 @@ export default function ChildrenPage() {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [giftFilter, setGiftFilter] = useState<'' | 'delivered' | 'pending'>('');
 
   // Only one equality filter can be pushed server-side at a time (matches the
   // composite indexes we have: employeeId+createdAt, village+createdAt, gender+createdAt).
@@ -263,6 +268,8 @@ export default function ChildrenPage() {
     if (activeServerFilterField !== 'gender' && genderFilter) data = data.filter((c) => c.gender === genderFilter);
     if (ageMin) data = data.filter((c) => c.age >= parseInt(ageMin));
     if (ageMax) data = data.filter((c) => c.age <= parseInt(ageMax));
+    if (giftFilter === 'delivered') data = data.filter((c) => c.giftReceived);
+    if (giftFilter === 'pending') data = data.filter((c) => !c.giftReceived);
     if (search) {
       const s = search.toLowerCase();
       data = data.filter(
@@ -276,14 +283,14 @@ export default function ChildrenPage() {
     }
     return data;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseRows, villageFilter, genderFilter, ageMin, ageMax, search, activeServerFilterField]);
+  }, [baseRows, villageFilter, genderFilter, ageMin, ageMax, giftFilter, search, activeServerFilterField]);
 
   const clearAllFilters = () => {
     setSearch(''); setGenderFilter(''); setVillageFilter(''); setEmployeeFilter('');
-    setAgeMin(''); setAgeMax(''); setDateFilter('all'); setCustomFrom(''); setCustomTo('');
+    setAgeMin(''); setAgeMax(''); setGiftFilter(''); setDateFilter('all'); setCustomFrom(''); setCustomTo('');
   };
 
-  const hasActiveFilters = !!(search || genderFilter || villageFilter || employeeFilter || ageMin || ageMax || dateFilter !== 'all');
+  const hasActiveFilters = !!(search || genderFilter || villageFilter || employeeFilter || ageMin || ageMax || giftFilter || dateFilter !== 'all');
 
   // Human-readable list of the filters currently applied, for the export header
   const describeFilters = (): [string, string][] => {
@@ -299,6 +306,7 @@ export default function ChildrenPage() {
     if (ageMin && ageMax) out.push(['Age', `${ageMin} – ${ageMax} years`]);
     else if (ageMin) out.push(['Age', `${ageMin} years and above`]);
     else if (ageMax) out.push(['Age', `Up to ${ageMax} years`]);
+    if (giftFilter) out.push(['Gift', giftFilter === 'delivered' ? 'Delivered' : 'Pending']);
     if (search) out.push(['Search', `"${search}"`]);
     return out;
   };
@@ -319,6 +327,8 @@ export default function ChildrenPage() {
       { header: 'Added By', width: 22 },
       { header: 'Employee Phone', width: 18 },
       { header: 'Date', width: 14 },
+      { header: 'Gift Status', width: 13 },
+      { header: 'Delivered On', width: 14 },
     ];
     ws.columns = columns.map((c) => ({ width: c.width }));
     const lastCol = String.fromCharCode(64 + columns.length);
@@ -385,6 +395,8 @@ export default function ChildrenPage() {
         c.employeeName,
         c.employeePhone,
         c.createdAt?.toDate ? format(c.createdAt.toDate(), 'dd MMM yyyy') : '',
+        c.giftReceived ? 'Delivered' : 'Pending',
+        c.giftReceived && c.giftReceivedAt?.toDate ? format(c.giftReceivedAt.toDate(), 'dd MMM yyyy') : '',
       ]);
       row.eachCell({ includeEmpty: true }, (cell, col) => {
         cell.border = {
@@ -394,7 +406,8 @@ export default function ChildrenPage() {
           right: { style: 'thin', color: { argb: 'FFDDDDDD' } },
         };
         if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F7F2' } };
-        if (col === 1 || col === 5) cell.alignment = { horizontal: 'center' };
+        if (col === 1 || col === 5 || col === 11) cell.alignment = { horizontal: 'center' };
+        if (col === 11) cell.font = { bold: true, color: { argb: c.giftReceived ? 'FF15803D' : 'FFB45309' } };
       });
     });
 
@@ -697,6 +710,16 @@ export default function ChildrenPage() {
             {areas.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
 
+          <select
+            className="input-field pr-8"
+            value={giftFilter}
+            onChange={(e) => setGiftFilter(e.target.value as '' | 'delivered' | 'pending')}
+          >
+            <option value="">All Gift Status</option>
+            <option value="delivered">Gift Delivered</option>
+            <option value="pending">Gift Pending</option>
+          </select>
+
           <div className="flex items-center gap-2">
             <input
               className="input-field w-20"
@@ -758,6 +781,7 @@ export default function ChildrenPage() {
                 <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Gender</th>
                 <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Village</th>
                 <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Added By</th>
+                <th className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider">Gift</th>
                 <th
                   className="px-4 py-3 text-left text-gray-500 font-semibold text-xs uppercase tracking-wider cursor-pointer hover:text-gold transition-colors select-none"
                   onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
@@ -775,14 +799,14 @@ export default function ChildrenPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-16">
+                  <td colSpan={9} className="text-center py-16">
                     <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin mx-auto" />
                     <p className="text-gray-400 text-sm mt-3">Loading data...</p>
                   </td>
                 </tr>
               ) : fetchError ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-16">
+                  <td colSpan={9} className="text-center py-16">
                     <p className="text-red-500 font-medium text-sm">Failed to load data</p>
                     <p className="text-gray-400 text-xs mt-1 max-w-sm mx-auto">{fetchError}</p>
                     <p className="text-gray-400 text-xs mt-2">
@@ -792,7 +816,7 @@ export default function ChildrenPage() {
                 </tr>
               ) : rowsFiltered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-16">
+                  <td colSpan={9} className="text-center py-16">
                     <p className="text-gray-400 text-base">No records found</p>
                     {hasActiveFilters && (
                       <button onClick={clearAllFilters} className="text-gold text-sm mt-2 hover:underline">
@@ -830,6 +854,19 @@ export default function ChildrenPage() {
                       <span className="text-gray-700 text-xs font-medium">{child.employeeName}</span>
                       {child.employeePhone && (
                         <p className="text-gray-400 text-xs mt-0.5">{child.employeePhone}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`badge inline-flex items-center gap-1 whitespace-nowrap ${
+                        child.giftReceived
+                          ? 'bg-green-50 text-green-700 border border-green-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}>
+                        {child.giftReceived ? <CheckCircle size={12} /> : <Gift size={12} />}
+                        {child.giftReceived ? 'Delivered' : 'Pending'}
+                      </span>
+                      {child.giftReceived && child.giftReceivedAt?.toDate && (
+                        <p className="text-gray-400 text-[11px] mt-0.5">{format(child.giftReceivedAt.toDate(), 'dd MMM yy')}</p>
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs">

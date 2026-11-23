@@ -5,9 +5,11 @@ import { db, auth } from '../../lib/firebase';
 import { onSnapshot, collection, query } from 'firebase/firestore';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  Cell,
+  Legend,
 } from 'recharts';
-import { Users, Baby, Building2, UserCheck, RefreshCw, Loader2 } from 'lucide-react';
+import { Users, Baby, Building2, UserCheck, RefreshCw, Loader2, Gift } from 'lucide-react';
+import Link from 'next/link';
+import { giftSummary } from '../../lib/gifts';
 
 interface ChildRow {
   id: string;
@@ -16,6 +18,7 @@ interface ChildRow {
   village?: string;
   employeeId?: string;
   deleted?: boolean;
+  giftReceived?: boolean;
 }
 
 interface Employee {
@@ -70,9 +73,9 @@ export default function DashboardPage() {
   const boysByAge = ageBreakdown('Male');
   const girlsByAge = ageBreakdown('Female');
 
-  const villageData = Object.entries(villageCounts)
-    .sort(([, a], [, b]) => (b as number) - (a as number))
-    .map(([village, count]) => ({ village, count: count as number }));
+  const gifts = giftSummary(children);
+  // Highest total first; each bar is split into delivered + pending
+  const villageData = gifts.villages;
 
   const employeeData = employees
     .map((e) => ({ id: e.id, name: e.name || 'Unknown', count: entriesByEmployee[e.id] || 0 }))
@@ -93,18 +96,6 @@ export default function DashboardPage() {
       alert(`Could not recalculate stats: ${err.message || 'unknown error'}`);
     }
     setRecalculating(false);
-  };
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload?.length) {
-      return (
-        <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm shadow-md">
-          <p className="text-gold font-semibold">{label}</p>
-          <p className="text-gray-600">{payload[0].value} children</p>
-        </div>
-      );
-    }
-    return null;
   };
 
   return (
@@ -154,6 +145,33 @@ export default function DashboardPage() {
           sub="Unique villages"
         />
       </div>
+
+      {/* Gift delivery progress */}
+      <Link
+        href="/dashboard/gift-report"
+        className="glass-card p-5 flex flex-col sm:flex-row sm:items-center gap-4 hover:shadow-md hover:border-green-200 transition-all"
+      >
+        <div className="flex items-center gap-3 sm:w-64 flex-shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-green-50 border border-green-200 flex items-center justify-center">
+            <Gift className="w-5 h-5 text-green-600" />
+          </div>
+          <div>
+            <p className="text-gray-400 text-xs uppercase tracking-wider font-semibold">Gifts Delivered</p>
+            <p className="font-serif text-2xl font-bold text-gray-900">
+              {gifts.delivered} <span className="text-gray-400 text-base font-sans">/ {gifts.total}</span>
+            </p>
+          </div>
+        </div>
+        <div className="flex-1">
+          <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-3 rounded-full bg-green-500 transition-all" style={{ width: `${gifts.percent}%` }} />
+          </div>
+          <div className="flex justify-between text-xs mt-1.5">
+            <span className="text-green-700 font-semibold">{gifts.percent}% delivered</span>
+            <span className="text-amber-700">{gifts.pending} pending · View report →</span>
+          </div>
+        </div>
+      </Link>
 
       {/* Age-wise breakdown: Boys | Girls */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -208,12 +226,22 @@ export default function DashboardPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" horizontal={false} />
               <XAxis type="number" stroke="#9CA3AF" tick={{ fontSize: 11, fill: '#6B7280' }} />
               <YAxis type="category" dataKey="village" stroke="#9CA3AF" tick={{ fontSize: 11, fill: '#6B7280' }} width={90} />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.04)' }} />
-              <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                {villageData.map((_, i) => (
-                  <Cell key={i} fill={i === 0 ? '#D4AF37' : '#1E3A8A'} />
-                ))}
-              </Bar>
+              <Tooltip
+                cursor={{ fill: 'rgba(0,0,0,0.04)' }}
+                content={({ active, payload, label }: any) =>
+                  active && payload?.length ? (
+                    <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm shadow-md">
+                      <p className="text-gold font-semibold">{label}</p>
+                      <p className="text-gray-600">{payload[0].payload.total} children</p>
+                      <p className="text-green-700">{payload[0].payload.delivered} gifts delivered</p>
+                      <p className="text-amber-700">{payload[0].payload.pending} pending</p>
+                    </div>
+                  ) : null
+                }
+              />
+              <Legend formatter={(value) => <span className="text-gray-600 text-xs">{value}</span>} />
+              <Bar dataKey="delivered" name="Gift delivered" stackId="v" fill="#22C55E" />
+              <Bar dataKey="pending" name="Pending" stackId="v" fill="#1E3A8A" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
           </div>
