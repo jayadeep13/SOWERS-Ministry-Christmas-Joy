@@ -14,6 +14,7 @@ import {
   Trash2,
   Gift,
   PackageCheck,
+  HeartHandshake,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -22,6 +23,7 @@ const navItems = [
   { href: '/dashboard/children', label: 'Children Data', icon: Users },
   { href: '/dashboard/employees', label: 'Employees', icon: UserCog },
   { href: '/dashboard/areas', label: 'Areas', icon: MapPin },
+  { href: '/dashboard/volunteers', label: 'Volunteers', icon: HeartHandshake },
   { href: '/dashboard/gift-delivery', label: 'Gift Delivery', icon: PackageCheck },
   { href: '/dashboard/gift-report', label: 'Gift Report', icon: Gift },
   { href: '/dashboard/recycle-bin', label: 'Recycle Bin', icon: Trash2 },

@@ -63,6 +63,7 @@ export default function ChildrenPage() {
 
   const [searchAllResults, setSearchAllResults] = useState<Child[] | null>(null);
   const [searchAllLoading, setSearchAllLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Add-child modal state
   const [showAdd, setShowAdd] = useState(false);
@@ -247,13 +248,17 @@ export default function ChildrenPage() {
     setDeletingId(null);
   };
 
+  // Every record matching the Date/Employee/Village/Gender filters, across all pages
+  const fetchAllMatching = async () => {
+    // No limit: Firestore caps limit() at 10,000, and we want every matching record
+    const snap = await getDocs(query(collection(db, 'children'), ...buildConstraints()));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)).filter((c) => !c.deleted);
+  };
+
   const handleSearchAll = async () => {
     setSearchAllLoading(true);
     try {
-      const base = buildConstraints();
-      const snap = await getDocs(query(collection(db, 'children'), ...base, limit(20000)));
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Child)).filter((c) => !c.deleted);
-      setSearchAllResults(rows);
+      setSearchAllResults(await fetchAllMatching());
     } catch (err: any) {
       alert(`Could not load all matching records: ${err.message || 'unknown error'}`);
     }
@@ -262,8 +267,9 @@ export default function ChildrenPage() {
 
   const baseRows = searchAllResults ?? children;
 
-  const rowsFiltered = useMemo(() => {
-    let data = baseRows.filter((c) => !c.deleted);
+  // The remaining filters (search, age, gift, …) run in the browser on whatever rows are given
+  const applyClientFilters = (rows: Child[]) => {
+    let data = rows.filter((c) => !c.deleted);
     if (activeServerFilterField !== 'village' && villageFilter) data = data.filter((c) => c.village === villageFilter);
     if (activeServerFilterField !== 'gender' && genderFilter) data = data.filter((c) => c.gender === genderFilter);
     if (ageMin) data = data.filter((c) => c.age >= parseInt(ageMin));
@@ -282,8 +288,13 @@ export default function ChildrenPage() {
       );
     }
     return data;
+  };
+
+  const rowsFiltered = useMemo(
+    () => applyClientFilters(baseRows),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseRows, villageFilter, genderFilter, ageMin, ageMax, giftFilter, search, activeServerFilterField]);
+    [baseRows, villageFilter, genderFilter, ageMin, ageMax, giftFilter, search, activeServerFilterField]
+  );
 
   const clearAllFilters = () => {
     setSearch(''); setGenderFilter(''); setVillageFilter(''); setEmployeeFilter('');
@@ -312,6 +323,16 @@ export default function ChildrenPage() {
   };
 
   const exportExcel = async () => {
+    // Always export every record matching the filters — not just the page on screen
+    setExporting(true);
+    let rowsToExport: Child[];
+    try {
+      rowsToExport = applyClientFilters(searchAllResults ?? (await fetchAllMatching()));
+    } catch (err: any) {
+      alert(`Could not export: ${err.message || 'unknown error'}`);
+      setExporting(false);
+      return;
+    }
     const ExcelJS = (await import('exceljs')).default;
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Children Data', { views: [{ showGridLines: false }] });
@@ -357,7 +378,7 @@ export default function ChildrenPage() {
     const details: [string, string][] = [
       ['Generated On', format(new Date(), 'dd MMM yyyy, hh:mm a')],
       ...(filters.length ? filters : [['Filters', 'None — all records'] as [string, string]]),
-      ['Total Records', String(rowsFiltered.length)],
+      ['Total Records', String(rowsToExport.length)],
     ];
     let r = 4;
     details.forEach(([label, value]) => {
@@ -383,7 +404,7 @@ export default function ChildrenPage() {
     });
 
     // Data rows
-    rowsFiltered.forEach((c, i) => {
+    rowsToExport.forEach((c, i) => {
       const row = ws.addRow([
         i + 1,
         c.firstName,
@@ -423,6 +444,7 @@ export default function ChildrenPage() {
     a.download = `sowers-children-${format(new Date(), 'yyyy-MM-dd')}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
+    setExporting(false);
   };
 
   const SortIcon = () =>
@@ -460,9 +482,14 @@ export default function ChildrenPage() {
           >
             <RefreshCw size={16} />
           </button>
-          <button onClick={exportExcel} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200">
-            <Download size={16} />
-            Export Excel
+          <button
+            onClick={exportExcel}
+            disabled={exporting}
+            title="Downloads every record matching your filters (all pages)"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition-all border border-gray-200 disabled:opacity-60"
+          >
+            {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {exporting ? 'Preparing…' : 'Export Excel'}
           </button>
           <button onClick={openAddModal} className="gold-btn px-4 py-2.5 flex items-center gap-2 text-sm">
             <Plus size={16} />
@@ -747,7 +774,7 @@ export default function ChildrenPage() {
           <p className="text-xs text-gray-400">
             {searchAllResults
               ? 'Searching every record matching your Date/Employee/Village/Gender filters.'
-              : 'Search and export only cover the currently loaded page — click "Load All Matching" to search or export everything.'}
+              : 'Export Excel always includes every matching record (all pages). Search covers this page only — click "Load All Matching" to search everything.'}
           </p>
           {searchAllResults ? (
             <button
