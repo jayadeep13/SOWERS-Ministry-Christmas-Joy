@@ -9,6 +9,7 @@ export const DESIGNATIONS = [
   'Media',
   'Distribution',
   'Finance',
+  'Security',
 ] as const;
 
 export const VOLUNTEER_GENDERS = ['Male', 'Female'] as const;
